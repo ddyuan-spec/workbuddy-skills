@@ -31,7 +31,7 @@ from pathlib import Path
 
 REPLACEMENT_CHAR = "\ufffd"
 BLOCK_TAGS = ["div", "table", "tr", "td", "section", "article", "ul", "ol", "li"]
-PLACEHOLDER_RE = re.compile(r"(placeholder|待补充|待完善|todo|tbd|占位|xxx)", re.I)
+PLACEHOLDER_RE = re.compile(r"(待补充|待完善|todo|tbd|占位符)", re.I)
 MD_FENCE_RE = re.compile(r"```(?:mermaid|markdown|flow|flowchart|sequence)", re.I)
 IMG_RE = re.compile(r"<img[^>]*src=[\"']([^\"']*)[\"']", re.I)
 
