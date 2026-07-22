@@ -306,7 +306,7 @@ Step 9  收尾：归档、删过程文件、更新索引与记忆
 9. 平台管理端功能需求详清
 10. 客户端功能需求详清
 11. 验收标准（AC）
-12. 埋点需求：必须引用《泰小虎埋点表v2.3》规范（见 `prd-structure-checker/references/tracking-spec.md`；权威源文件 `D:/梯子/泰小虎埋点表v2.3 (5).xlsx`，在线方案 https://ddyuan-spec.github.io/taixiaohu/taixiaohu-tracking-plan.html ）。事件与属性**只能取既有目录（30 个事件 / L1-L3），禁止凭空编造**；新事件须走埋点评审，不在 PRD 内新增定义；引用埋点参数一律用友盟后台中文名。
+12. 埋点需求：必须引用《泰小虎埋点表v2.3》规范（AI 写作用 `prd-structure-checker/references/tracking-spec.md`；权威源文件 `D:/梯子/泰小虎埋点表v2.3 (5).xlsx`，在线方案 https://ddyuan-spec.github.io/taixiaohu/taixiaohu-tracking-plan.html ）。事件与属性**只能取既有目录（30 个事件 / L1-L3），禁止凭空编造**；新事件须走埋点评审，不在 PRD 内新增定义；引用埋点参数一律用友盟后台中文名。**⚠️ PRD §五 禁止内嵌整张埋点表**：只放「一句说明 + 在线链接 `https://ddyuan-spec.github.io/taixiaohu/taixiaohu-tracking-spec.html` + 本期涉及事件清单（精简表：事件英文名/显示名/层/平台/触发时机/必含上报参数中文名）」，不展开全部属性列、不列未涉及事件。
 13. 非功能性需求
 14. 边界设计检查清单
 15. 关联需求
