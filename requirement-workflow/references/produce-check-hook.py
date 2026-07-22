@@ -5,6 +5,7 @@
 
 用法:
   python produce-check-hook.py <需求文件夹> [--step N] [--expect 文件1 文件2 ...]
+  python produce-check-hook.py <需求文件夹> --scope <功能生命周期标注.html>   # 范围确认门禁
 
 功能（对应 skill「产出校验 Hook」通用三查）:
   1. 数量: 对照 --expect 清单，检查期望文件是否齐全（缺失告警）
@@ -16,6 +17,11 @@
      - Markdown 残留: 检测 ```mermaid / ``` 流程图 等语法残留
 
 输出: 每文件 ✅/❌ 报告 + 末尾结论；存在异常退出码 1，全过退出码 0。
+
+范围确认门禁（--scope）:
+  进入 Step 2 前调用，检查范围对齐草稿(功能生命周期标注.html)存在且含用户确认标记：
+  - 确认标记 = 草稿内写入 SCOPE_CONFIRMED，或同目录存在 <stem>-范围已确认.md 伴随文件。
+  - 缺失 → 门禁不通过（AI 须先让用户标注并显式确认范围）。
 """
 import argparse
 import re
@@ -81,6 +87,23 @@ def check_html(path: Path):
     return issues
 
 
+def check_scope(path: Path):
+    """范围确认门禁：检查范围对齐草稿存在且已获用户确认标记。"""
+    issues = []
+    if not path.exists():
+        issues.append(f"范围对齐草稿缺失: {path}（Step1 须先产出功能生命周期标注.html）")
+        return issues
+    # 确认标记：AI 在用户标注确认后，应在该文件写入 SCOPE_CONFIRMED 标记，
+    # 或在同目录生成 <stem>-范围已确认.md 伴随文件。
+    txt = path.read_text(encoding="utf-8", errors="replace")
+    confirmed_marker = "SCOPE_CONFIRMED" in txt
+    companion = path.parent / (path.stem + "-范围已确认.md")
+    if not (confirmed_marker or companion.exists()):
+        issues.append("未检测到范围确认标记（缺 SCOPE_CONFIRMED 或 <stem>-范围已确认.md）；"
+                      "须用户标注并显式确认范围后才可进 Step 2")
+    return issues
+
+
 def check_docx(path: Path):
     issues = []
     try:
@@ -105,6 +128,8 @@ def main():
     ap.add_argument("folder", help="需求交付文件夹路径")
     ap.add_argument("--step", default="?", help="当前步骤号(仅用于报告标注)")
     ap.add_argument("--expect", nargs="*", default=[], help="期望产出的文件名清单")
+    ap.add_argument("--scope", default=None, help="范围确认门禁：传入功能生命周期标注.html 路径，"
+                                                  "检查范围草稿存在且含用户确认标记")
     args = ap.parse_args()
 
     folder = Path(args.folder)
@@ -116,6 +141,18 @@ def main():
     print(f"=== 产出校验 Hook | step {args.step} | 目录 {folder} ===")
 
     ok = True
+
+    # 范围确认门禁（可选，进入 Step 2 前调用）
+    if args.scope:
+        sp = Path(args.scope)
+        iss = check_scope(sp)
+        if iss:
+            ok = False
+            print(f"[范围门禁] ❌ {sp.name}:")
+            for i in iss:
+                print(f"    - {i}")
+        else:
+            print(f"[范围门禁] ✅ 范围已确认（{sp.name} 含确认标记 / 伴随确认文件）")
 
     # 数量
     if args.expect:
