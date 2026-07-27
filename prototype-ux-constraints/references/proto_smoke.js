@@ -149,5 +149,42 @@ if (undef === 0) ok('所有 onclick 处理函数均已定义');
 console.log('\n=== [E] JS 运行期错误汇总 ===');
 if (errors.length) errors.forEach(e => fail(e)); else ok('无 JS 运行期错误');
 
+console.log('\n=== [F] 表单选项去重 / 错漏校验 ===');
+let dupCount = 0;
+// F1: <select> 下拉选项去重
+document.querySelectorAll('select').forEach(sel => {
+  const opts = [...sel.options].filter(o => o.value !== ''); // 排除 placeholder
+  const labels = opts.map(o => (o.textContent || '').trim());
+  const seen = new Set();
+  labels.forEach((lbl, i) => {
+    if (seen.has(lbl)) {
+      dupCount++;
+      fail(`<select>#${sel.id || '(无id)'} 重复选项「${lbl}」(第 ${seen.size + 1} 次出现)`);
+    }
+    seen.add(lbl);
+  });
+});
+// F2: radio group / checkbox label 去重
+document.querySelectorAll('input[type=radio], input[type=checkbox]').forEach(el => {
+  const name = el.getAttribute('name');
+  if (!name) return;
+  // 同 name 组内检查相邻 label 文本重复（简化：检查同组 label）
+  const group = document.querySelectorAll(`input[name="${name}"]`);
+  const labels = [...group].map(inp => {
+    // 找关联 label：for 属性 或 父级 <label> 文本
+    const forLabel = inp.id ? document.querySelector(`label[for="${inp.id}"]`) : null;
+    if (forLabel) return (forLabel.textContent || '').trim();
+    const parentLabel = inp.closest('label');
+    if (parentLabel) return (parentLabel.textContent || '').replace(/[✓☐]\s*/, '').trim();
+    return '';
+  }).filter(Boolean);
+  const seen = new Set();
+  labels.forEach(lbl => {
+    if (seen.has(lbl)) { dupCount++; fail(`radio/checkbox[name="${name}"] 重复标签「${lbl}」`); }
+    seen.add(lbl);
+  });
+});
+if (dupCount === 0) ok('所有下拉 / 单选 / 复选选项无重复');
+
 console.log('\n' + (fails === 0 ? '✅ 冒烟测试全部通过，可交付' : `❌ 共 ${fails} 项不通过，禁止交付，先修复`));
 process.exit(fails === 0 ? 0 : 1);
