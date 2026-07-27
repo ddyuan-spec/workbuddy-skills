@@ -3,13 +3,16 @@
 """
 PRD 结构排查脚本
 扫描一份 PRD 文档（.md/.txt/.docx/.html），对照必含板块清单，
-分三阶段输出报告：
+分四阶段输出报告：
   阶段1（结构存在性）：一~九 必含板块是否出现（缺失即不通过）。
   阶段2（§D 内容深度）：功能需求详情是否达到"模板式详清"门槛
         （逐页原型截图 / 字段明细表 / 按钮权限表 / 逐步操作逻辑 /
          查询条件规格 / 数据来源标注 / 计算公式 / 显示位置等）。
   阶段3（待确认项扫描）：检测全文"待确认/需确认/@X确认/TBD/待补充"等
         标记，提醒向用户澄清或保留占位，禁止臆测填充。
+  阶段4（红线与图文一致性）：扫描越界红线词（用户裁定不纳入的端口/能力）、
+        待确认项悬空（引用字段正文未定义）、埋点表是否符合《泰小虎埋点表v2.3》
+        双表规范或已链接引用、以及图文一致性人工核对清单。
 缺失板块、深度单薄项或待确认项，交由调用方（WorkBuddy）向用户反问补充。
 
 用法：
@@ -99,6 +102,122 @@ DEPTH_ITEMS = [
 DEPTH_WARN_THRESHOLD = 3
 
 
+# ---------------------------------------------------------------------------
+# 阶段4：红线词 / 待确认溯源 / 埋点v2.3规范 / 图文一致性 扫描
+# 沉淀自「直播挂车与时长发券」需求评审踩坑：图文臆造、范围外误入、埋点不规范
+# ---------------------------------------------------------------------------
+# 红线词：用户已裁定不纳入本项目的端口/能力（出现即须有明确"不涉及"豁免声明）
+RED_LINE_TERMS = ["商家端后台", "商家端", "回放", "火山SaaS", "火山 SaaS",
+                  "SaaS配置", "SaaS 配置", "火山引擎直播配置", "火山直播配置"]
+RED_LINE_EXEMPT = ["不涉及", "不涵盖", "不在范围", "排除", "本期不含",
+                   "本需求不含", "不含", "未涉及", "明确范围外", "不配置",
+                   "不开放", "不新增", "不支持"]
+# 《泰小虎埋点表 v2.3》双表规范核心列（命中≥阈值视为符合）
+V23_CORE_COLS = ["事件编号", "项目", "所属层", "平台", "模块", "事件英文名",
+                 "事件显示名", "事件类型", "属性英文名", "属性显示名",
+                 "数据类型", "属性说明", "触发时机", "必填性", "示例值",
+                 "上报时机", "去重规则", "校验规则", "状态", "测试进度"]
+V23_MIN_HIT = 12
+# 简化版埋点表特征列（5列版，禁止）
+SIMPLIFIED_TRACKING_COLS = ["所属终端", "所在页面", "事件名称", "触发时机", "上报参数"]
+# 图文一致性：图说关键词
+DIAGRAM_KW = ["流程图", "架构图", "范围图", "状态机", "时序图", "信息架构图"]
+
+
+# ---------------------------------------------------------------------------
+# 阶段4 扫描函数
+# ---------------------------------------------------------------------------
+def scan_red_line(text):
+    """红线词：用户裁定不纳入的端口/能力，出现须有明确'不涉及'豁免声明。
+
+    两级豁免：
+    1) 文档级豁免：PRD 含「红线豁免声明」块（写明某红线词为本需求「范围内」能力，
+       或写明「仅不涉及 XX」）时——被声明为范围内的词全文豁免；
+       被声明为不涉及的词，若声明块已覆盖，也全文豁免。
+       （红线词表沉淀自具体需求评审，跨需求存在范围差异，允许文档显式改判。）
+    2) 局部豁免：单次出现位置 ±30 字内含"不涉及/不在范围"等豁免词。
+    """
+    warns = []
+    # 文档级豁免声明块（取「红线豁免声明」出现处往后 300 字作为声明内容）
+    doc_exempt_terms = set()
+    for dm in re.finditer(r"红线豁免声明", text):
+        decl = text[dm.start(): dm.start() + 300]
+        for term in RED_LINE_TERMS:
+            if term in decl:
+                # 声明块中写为「范围内」或「不涉及」均视为已对该词作出裁定
+                doc_exempt_terms.add(term)
+    for term in RED_LINE_TERMS:
+        if term in doc_exempt_terms:
+            continue
+        # 子串词被更长的已豁免词覆盖（如「商家端」被「商家端后台」声明覆盖）
+        if any(term in longer and longer != term for longer in doc_exempt_terms):
+            continue
+        for m in re.finditer(term, text):
+            ctx = text[max(0, m.start() - 30): m.start() + 30]
+            if not any(ex in ctx for ex in RED_LINE_EXEMPT):
+                warns.append(
+                    f"红线词「{term}」出现且附近无豁免声明（不涉及/不在范围等）；"
+                    f"若为范围外请明确写「本需求不涉及{term}」，禁止作为功能实现描述；"
+                    f"若为范围内能力请在文档加「红线豁免声明」块显式改判")
+                break
+    return warns
+
+
+def scan_uncertain_traceability(text):
+    """待确认溯源：待确认项引用的字段/概念须在正文其他位置有定义，悬空则告警。"""
+    warns = []
+    pat = re.compile(r'待确认\s*@[\u4e00-\u9fa5A-Za-z]+[：:]\s*([^\n。；;]{2,60})')
+    for m in pat.finditer(text):
+        item = m.group(1)
+        fields = re.findall(r'[「""]([^」""]+?)[」""]', item)
+        for f in fields:
+            cnt = len(re.findall(re.escape(f), text))
+            if cnt <= 1:
+                warns.append(
+                    f"待确认项疑似悬空：引用字段「{f}」全文仅出现 {cnt} 次"
+                    f"（仅在待确认处），正文未定义；请确认属正文已定义字段，否则删除该待确认")
+    return warns
+
+
+def scan_tracking_v23(text, norm):
+    """埋点规范：须符合 v2.3 双表或链接引用独立文档，禁止 5 列简化版。"""
+    warns = []
+    has_tracking = ('埋点' in norm) or ('事件名称' in norm) or ('上报参数' in norm)
+    if not has_tracking:
+        return warns
+    linked = ('埋点规范 v2.3' in text) or ('taixiaohu-tracking' in norm) or \
+             ('live-tracking' in norm) or ('独立文档' in text and '埋点' in text)
+    if linked:
+        return warns
+    hit_cols = [c for c in V23_CORE_COLS if c in text]
+    if len(hit_cols) < V23_MIN_HIT:
+        simp = [c for c in SIMPLIFIED_TRACKING_COLS if c in text]
+        if simp:
+            warns.append(
+                "埋点表为简化版（含 " + "/".join(simp) + "），不符合《泰小虎埋点表v2.3》"
+                "双表规范；须改为 v2.3 双表或改为链接引用独立文档")
+        else:
+            warns.append(
+                f"埋点表仅命中 v2.3 核心列 {len(hit_cols)}/{len(V23_CORE_COLS)}，"
+                "不符合双表规范（须含事件编号/项目/所属层/平台/模块/事件英文名…/校验规则/状态等）")
+    return warns
+
+
+def scan_diagram_consistency(text):
+    """图文一致性：检出图说关键词后输出人工核对清单（图内文字不可直接解析）。"""
+    found = [k for k in DIAGRAM_KW if k in text]
+    if not found:
+        return [], []
+    checklist = [
+        "流程图节点须与正文主流程逐条对应，不含正文未定义的功能（如仅'同步'却画'创建直播间'）",
+        "影响范围图依赖系统须与正文'数据层/第三方依赖'逐条对应，不含正文未列出的依赖"
+        "（如'用户账号/画像''商城订单''优惠券模块'若正文未列为依赖则违规）",
+        "状态枚举须对接真实接口文档枚举值，禁止假设（如'违规下播'若接口无此值则须删除）",
+        "图中出现的字段/概念须在正文有定义",
+    ]
+    return found, checklist
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法：python check_prd.py <prd文件>")
@@ -177,6 +296,47 @@ def main():
     else:
         print("✅ 未发现待确认/不确定标记。")
 
+    # ---------- 阶段4：红线词 / 待确认溯源 / 埋点v2.3 / 图文一致性 ----------
+    print()
+    print("## 阶段4：红线与图文一致性扫描（沉淀自评审踩坑）")
+    print()
+    rl = scan_red_line(text)
+    ut = scan_uncertain_traceability(text)
+    tv = scan_tracking_v23(text, norm)
+    dg_found, dg_check = scan_diagram_consistency(text)
+
+    if rl:
+        print(f"### 🚫 红线词告警（{len(rl)} 处）")
+        for w in rl:
+            print(f"- ⚠️ {w}")
+        print()
+    else:
+        print("✅ 未发现越界红线词。")
+
+    if ut:
+        print(f"### 🔗 待确认溯源告警（{len(ut)} 处）")
+        for w in ut:
+            print(f"- ⚠️ {w}")
+        print()
+    else:
+        print("✅ 待确认项均有正文锚点（或无可提取引用字段）。")
+
+    if tv:
+        print(f"### 📊 埋点规范告警（{len(tv)} 处）")
+        for w in tv:
+            print(f"- ⚠️ {w}")
+        print()
+    else:
+        print("✅ 埋点表符合 v2.3 双表规范或已链接引用独立文档。")
+
+    if dg_found:
+        print(f"### 🖼️ 图文一致性人工核对（检测到图：{', '.join(dg_found)}）")
+        for c in dg_check:
+            print(f"- ⚠️ {c}")
+        print()
+    else:
+        print("（未检测到图说关键词，跳过图文一致性核对）")
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -205,6 +365,10 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
+    red_total = len(rl) + len(ut) + len(tv)
+    if red_total:
+        print(f"⚠️ **阶段4 发现 {red_total} 处红线/一致性风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)} / 埋点规范 {len(tv)}）："
+              "须逐项确认或修正后再定稿。")
     print()
 
 
