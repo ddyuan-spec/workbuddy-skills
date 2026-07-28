@@ -365,6 +365,35 @@ meta 关键词清单：
 
 **踩坑**：优惠券 PRD V1.0.13 的 4 处原型示意全部为链接形式（coupon-platform / coupon-merchant / coupon-app / coupon-mini-h5），V1.0.14 全部替换为 Edge headless 截图。
 
+### §4.16 PROTOTYPE_IMAGE_INVALID — 原型截图必须文件存在+样式规范（v1.0.16）
+
+**问题**：PRD「原型示意」已改为 `<img>` 标签（§4.15 已通过），但图片仍显示为破损图标——原因是：
+1. **src 路径引用的文件在本地磁盘不存在**（截图放到了 `原型截图/` 目录但 HTML 写的是 `coupon-prd-assets/`）
+2. **文件未推送到 GitHub** → 线上 GitHub Pages 同样 404
+3. **`<img>` 缺少 style 或 alt 属性** → 即使文件存在，展示效果也不规范
+
+**规则**：对每个「原型示意」中的 `<img>` 标签执行三道校验（全部通过才放行）：
+
+| # | 校验项 | 严重度 | 检测逻辑 | 不通过时提示 |
+|---|--------|--------|----------|-------------|
+| ① | 文件存在性 | 🔴 | `os.path.isfile(os.path.join(PRD目录, src))` | "图片文件不存在，线上会 404" |
+| ② | style 规范 | 🟡 | style 含 `max-width` + `border` | "缺少 max-width/border，建议补全" |
+| ③ | alt 属性 | 🟡 | 标签含 `alt="..."` | "缺少 alt 属性，建议补充语义描述" |
+
+**标准 img 标签模板**（必须包含）：
+```html
+<img src="coupon-prd-assets/xxx.png"
+     style="max-width:100%;border:1px solid #e0e0e0;border-radius:8px;"
+     alt="xxx端原型">
+```
+
+**修复方式**：
+1. 确认截图文件路径与 HTML 中 src 一致（用 `ls` 验证）
+2. 截图文件必须 `git push` 到 GitHub 仓库（GitHub Pages 只能访问仓库内文件）
+3. `<img>` 标签补全 style + alt
+
+**踩坑**：优惠券 PRD V1.0.14~V1.0.15 的 4 张截图因路径不匹配（`原型截图/` vs `coupon-prd-assets/`）+ 未推送，导致线上持续显示破损图标直至 V1.0.16 修复。
+
 ## 文件说明
 
 - `references/prd-structure.md`：必含板块 一~九 清单与判定口径（唯一依据），含 D 板块深度门槛与不确定性红线。
