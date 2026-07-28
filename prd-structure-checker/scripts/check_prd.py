@@ -1407,17 +1407,36 @@ def scan_requirement_md_tag_mismatch(html_text, prd_path=None):
 
 
 def scan_missing_prototype_for_new_features(html_text):
-    """扫描「本期新增/本期改动」功能点是否缺少原型截图（v1.0.25 沉淀自评审）。
+    """扫描「本期新增/本期改动」功能点是否缺少原型截图（v1.0.25 沉淀自评审，v1.0.28 增强优先级区分）。
 
-    规则 §4.25 MISSING_PROTOTYPE_FOR_NEW_FEATURE：
+    规则 §4.25 MISSING_PROTOTYPE_FOR_NEW_FEATURE（增强版）：
     - 遍历 §四 中所有 h4 功能点小节
     - 若 h4 的 tag 为「本期新增」或「本期改动」（class 包含 tag y）
     - 检查该 h4 到下一个同级标题之间是否存在 <img> 标签
-    - 无 <img> → 🔴 报缺失：新增/改动功能应有原型截图佐证
+    - 无 <img> → 进一步判定严重等级：
 
-    豁免：h4 标题含「引用」「差异」「状态机」「说明」等非页面类关键词。
+    **🚨 阻断级（BLOCKER）** — 必须补独立截图才能定版：
+      a) 标题含独立页面关键词：详情 / 新建 / 编辑 / 列表 / 看板 / 数据看板 / 查询 / 管理
+      b) 后台端（平台端/商家端）的功能点 —— 后台页面无"父级总览图"可引用
+      c) h4 内有「表单字段」「字段表」等表单类内容但无截图
+
+    **🟡 提醒级（REMINDER）** — 建议补独立截图，但不阻断：
+      a) 客户端（App/H5/小程序）子功能点
+      b) 该 h4 所在的 h3 章节顶部已有原型总览图（<img> 距 h3 < 500 字符）
+      c) 文字描述中已写明「示意图见 XXX 原型」
+
+    豁免：h4 标题含「差异」「状态机」「流程」「说明」「附录」等非页面类关键词。
+
+    规则 §4.28 TAG_UPGRADE_IMAGE_SYNC（v1.0.28 新增）：
+      当功能点 tag 从「已有-沿用」升级为「本期新增/本期改动」时，
+      除 FR 文字外必须同步补 <img> 截图。
+      本规则与 §4.25 共享检测逻辑，通过 blocker/warn 分级体现：
+      - 后台独立页面缺图 → 🚨 阻断（tag 升级后资源未同步）
+      - 客户端子功能缺图 → 🟡 提醒（可接受引用父级图）
     """
+    blockers = []
     warns = []
+
     # 匹配 h4 及其 tag
     h4_pattern = re.compile(
         r'<h4[^>]*>(.+?)<span\s+class="tag[^"]*y[^"]*">(.+?)</span></h4>',
@@ -1428,8 +1447,21 @@ def scan_missing_prototype_for_new_features(html_text):
     for m in re.finditer(r'<h4', html_text):
         h4_positions.append(m.start())
 
+    # 找所有 h3 位置及其后的首个 img 位置（用于判断"父级总览图覆盖"）
+    h3_img_map = {}  # h3_start_pos -> bool (h3 后是否有 img)
+    for hm in re.finditer(r'<h3[^>]*>', html_text):
+        h3_start = hm.start()
+        # 查找 h3 之后 500 字符内是否有 img
+        h3_tail = html_text[h3_start:h3_start + 500]
+        h3_img_map[h3_start] = bool(re.search(r'<img\s', h3_tail))
+
     # 豁免关键词（非独立页面的功能点描述）
-    skip_keywords = ['引用', '差异说明', '状态机', '流程', '说明', '附录']
+    skip_keywords = ['差异说明', '状态机', '流程', '说明', '附录']
+
+    # 阻断级关键词：这些类型的页面必须有独立截图
+    blocker_keywords = ['详情', '新建', '编辑', '列表', '看板', '数据看板', '查询', '管理']
+    # 提醒级关键词：客户端子功能
+    reminder_indicators = ['获券弹窗', '我的优惠券', '商品详情领券', '确认订单', '首页']
 
     for m in h4_pattern.finditer(html_text):
         tag_text = m.group(2).strip()
@@ -1452,15 +1484,85 @@ def scan_missing_prototype_for_new_features(html_text):
         # 检查是否有 img
         has_img = bool(re.search(r'<img\s', section_html))
 
-        if not has_img:
-            warns.append(
-                f"🔴 **「{title_text}」缺少原型截图**："
-                f"\n   该功能点 tag=「{tag_text}」，但 h4 小节内未找到 <img> 原型截图标签。"
-                f"\n   新增/改动功能应附原型截图（列表页 / 表单页 / 交互示意），"
-                f"从对应端口原型文件截取 1440×900 后插入。"
-                f"\n   触发规则 §4.25 MISSING_PROTOTYPE_FOR_NEW_FEATURE")
+        if has_img:
+            continue  # 有图，跳过
 
-    return (warns,)
+        # ===== 无图 → 判定严重等级 =====
+
+        # 判断所属 h3 是否有父级总览图
+        parent_h3_pos = None
+        for h3_pos in sorted(h3_img_map.keys()):
+            if h3_pos < m.start():
+                parent_h3_pos = h3_pos
+            else:
+                break
+        has_parent_img = h3_img_map.get(parent_h3_pos, False) if parent_h3_pos else False
+
+        # 判断是否有文字引用说明（如"示意图见..."）
+        has_ref_text = bool(re.search(r'示意图见|详见.*原型|原型见|参考.*原型', section_html))
+
+        # 判断是否为后台端功能点：查找当前 h4 之前最近的 h3 标题内容
+        # 用 h3_positions 已有的数据
+        prev_h3_pos = None
+        for h3_pos in sorted(h3_img_map.keys()):
+            if h3_pos < m.start():
+                prev_h3_pos = h3_pos
+            else:
+                break
+        # 取 h3 标签的完整文本（到 </h3> 为止）
+        is_backend = False
+        if prev_h3_pos is not None:
+            h3_end = html_text.find('</h3>', prev_h3_pos)
+            if h3_end > prev_h3_pos:
+                h3_text = html_text[prev_h3_pos:h3_end]
+                is_backend = bool(re.search(r'平台端后台|商家端后台', h3_text))
+
+        # 判断是否为阻断级
+        # 关键规则：后台端功能点始终为阻断级（父级总览图通常只展示默认视图如 P1 列表，
+        # 不能覆盖 D1 详情/D2 新建/P3 列表/P4 看板等独立页面）
+        is_blocker = (
+            is_backend  # 后台端功能点 → 始终阻断（不论是否有父级总览图）
+            or (any(kw in title_text for kw in blocker_keywords) and not has_parent_img)  # 非后台但有独立页面关键词且无父级图
+        )
+
+        # 客户端子功能且有父级图或引用文字 → 降级为提醒
+        is_reminder = (
+            any(ind in title_text for ind in reminder_indicators)
+            or (has_parent_img and not is_backend)
+            or has_ref_text
+        ) and not is_blocker
+
+        msg_title = f"「{title_text}」"
+        msg_tag = f"tag=「{tag_text}」"
+        msg_action = "从对应端口原型文件截取 1440×900 后插入该 h4 小节内。"
+
+        if is_blocker:
+            blockers.append(
+                f"🚨 **{msg_title} 缺少原型截图 [阻断级]**："
+                f"\n   {msg_tag}，h4 小节内未找到 <img> 原型截图标签。"
+                f"\n   该功能点为{'后台独立页面' if is_backend else '独立页面'}，"
+                f"无法引用父级总览图，**必须补独立截图**。"
+                f"\n   {msg_action}"
+                f"\n   ⛔ 触发规则 §4.25+§4.28：tag 升级后截图资源未同步（阻断级，不补图不可定版）"
+            )
+        elif is_reminder:
+            warns.append(
+                f"🟡 **{msg_title} 无独立原型截图 [提醒级]**："
+                f"\n   {msg_tag}，h4 小节内无独立 <img>，"
+                f"但{'所在 h3 顶部有父级总览图可覆盖' if has_parent_img else '文中已引用原型'}。"
+                f"\n   建议补独立截图以提升可读性；如确由父级图覆盖可忽略本提醒。"
+                f"\n   触发规则 §4.25 MISSING_PROTOTYPE_FOR_NEW_FEATURE（提醒级）"
+            )
+        else:
+            # 默认按阻断处理
+            blockers.append(
+                f"🚨 **{msg_title} 缺少原型截图 [阻断级]**："
+                f"\n   {msg_tag}，h4 小节内未找到 <img> 原型截图标签。"
+                f"\n   {msg_action}"
+                f"\n   ⛔ 触发规则 §4.25+§4.28：tag 升级后截图资源未同步（阻断级）"
+            )
+
+    return (blockers, warns)
 
 
 def scan_verbose_nfr_warnings(html_text):
@@ -2193,7 +2295,7 @@ def main():
     sl_warns, = scan_scope_leak_feature(raw_html if raw_html else html_text)
     ld_warns, = scan_lazy_function_detail(raw_html if raw_html else html_text)
     rmtm_warns, = scan_requirement_md_tag_mismatch(raw_html if raw_html else html_text, path)
-    mpf_warns, = scan_missing_prototype_for_new_features(raw_html if raw_html else html_text)
+    mpf_blockers, mpf_warns = scan_missing_prototype_for_new_features(raw_html if raw_html else html_text)
     mvs_warns, = scan_mixed_view_screenshot(raw_html if raw_html else html_text)
     vta_warns, = scan_verbose_table_annotations(raw_html if raw_html else html_text)
 
@@ -2438,16 +2540,28 @@ def main():
     else:
         pass  # 无 MD 文件或无矛盾时不输出
 
+    # §4.25+§4.28 缺截图：阻断级（blockers）优先输出，再输出提醒级（warns）
+    if mpf_blockers:
+        print(f"### 🚨🖼️ 新增/改动功能缺少原型截图 [阻断级]（{len(mpf_blockers)} 处，不补图不可定版 · §4.25+§4.28）")
+        for w in mpf_blockers:
+            print(f"- {w}")
+            print()
+        print("⛔ **阻断级要求**：以上为独立页面/后台页面/表单类功能点，"
+              "必须从对应端口原型 HTML 截取 1440×900 独立截图，"
+              "以 <img> 标签插入该 h4 小节内。tag 从「已有-沿用」升级为「本期新增」时必须同步补图。")
+        print()
+
     if mpf_warns:
-        print(f"### 🖼️ 新增/改动功能缺少原型截图（{len(mpf_warns)} 处，§4.25 缺截图）")
+        print(f"### 🟡🖼️ 新增/改动功能无独立原型截图 [提醒级]（{len(mpf_warns)} 处，建议补图 · §4.25）")
         for w in mpf_warns:
             print(f"- {w}")
             print()
-        print("处理要求：从对应端口原型 HTML 截取 1440×900 图片，"
-              "以 <img> 标签插入该 h4 小节内（列表页 + 表单页各一张）。")
+        print("💡 提醒：以上为客户端子功能点或已有父级总览图覆盖的功能点，"
+              "建议补独立截图提升可读性；如确由父级图覆盖可忽略本提醒。")
         print()
-    else:
-        pass
+
+    if not mpf_blockers and not mpf_warns:
+        pass  # 无缺图问题
 
     if mvs_warns:
         print(f"### 🖼️ 多视图截图未拆分（{len(mvs_warns)} 处，§4.26 混合截图）")
