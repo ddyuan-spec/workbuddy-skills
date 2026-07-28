@@ -1082,6 +1082,58 @@ def scan_prototype_image_oversized(html_text, prd_path=None):
     return (warns,)
 
 
+def scan_reuse_function_verbose(html_text):
+    """扫描「已有-沿用」功能点是否写了冗余废话（v1.0.19 沉淀自评审）。
+
+    规则 §4.18 REUSE_FUNCTION_VERBOSE：
+    标注为 <span class="tag r">已有-沿用</span> 的功能点，**只允许写一句**
+    「沿用现有功能。」，禁止展开按钮列表、原型链接、「本期仅补充」
+    等上下文说明——这些不是产品功能描述。
+
+    🔴 判定标准：段落文本去除「沿用现有功能」后仍有 >10 字符的有效内容。
+    """
+    warns = []
+
+    # 匹配所有「已有-沿用」标签及其后续 <p> 段落
+    sections = re.finditer(
+        r'(<h[^>]*>[\s\S]*?<span class="tag r">已有-沿用</span></h[^>]*>)'
+        r'\s*<div class="sec">\s*<p>([\s\S]*?)</p>',
+        html_text, re.IGNORECASE
+    )
+
+    for m in sections:
+        heading = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+        para_text = m.group(2).strip()
+
+        # 去除 HTML 标签和加粗标记
+        clean = re.sub(r'<[^>]+>', '', para_text).strip()
+
+        # 标准答案
+        standard = '沿用现有功能。'
+
+        if standard in clean:
+            # 去掉标准答案后看还有没有废话
+            remainder = clean.replace(standard, '').strip()
+            # 去掉标点和空白
+            remainder = re.sub(r'[，。、：；""''（）()\s]', '', remainder)
+            if len(remainder) > 10:
+                warns.append(
+                    f"🔴 **「已有-沿用」功能点写了冗余废话**（{heading}）："
+                    f"\n   仅允许写一句「{standard}」，当前写了："
+                    f"\n   「{clean[:120]}{'...' if len(clean)>120 else ''}」"
+                    f"\n   多余内容（{len(remainder)}字符）须删除："
+                    f"「{remainder[:80]}{'...' if len(remainder)>80 else ''}」")
+        else:
+            # 连标准答案都没有
+            if clean and len(clean) > 3:
+                warns.append(
+                    f"🟡 **「已有-沿用」功能点未使用标准文案**（{heading}）："
+                    f"\n   当前写的是：「{clean[:100]}{'...' if len(clean)>100 else ''}」"
+                    f"\n   应统一为：「{standard}」")
+
+    return (warns,)
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -1428,6 +1480,7 @@ def main():
     pl_warns, = scan_prototype_link_instead_of_image(raw_html if raw_html else html_text)
     pi_warns, = scan_prototype_image_valid(raw_html if raw_html else html_text, path)
     po_warns, = scan_prototype_image_oversized(raw_html if raw_html else html_text, path)
+    rv_warns, = scan_reuse_function_verbose(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1588,6 +1641,17 @@ def main():
         print()
     else:
         print("✅ 所有「原型示意」截图尺寸合理（高度≤1200px，无超大空白）。")
+
+    if rv_warns:
+        print(f"### 📝 「已有-沿用」冗余检查（{len(rv_warns)} 处，§4.18 禁止废话）")
+        for w in rv_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：「已有-沿用」功能点只允许写一句「沿用现有功能。」"
+              "——不展开按钮列表、原型链接、「本期仅补充」等上下文说明。")
+        print()
+    else:
+        print("✅ 所有「已有-沿用」功能点均只写标准文案，无冗余赘述。")
 
     # ---------- 结论 ----------
     print()
