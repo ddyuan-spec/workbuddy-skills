@@ -832,6 +832,48 @@ def scan_table_quality(html_text):
         if t["has_colspan_rowspan"]:
             style_warns.append(f"[{tlabel}] 使用 colspan/rowspan，注意跨行对齐")
 
+        # ---- 新增：CSS 视觉渲染层检测（结构正确但渲染可能错位）----
+        # 8) 🟡 td 内含 <br> + 长文字（>12字）→ 撑爆列宽风险
+        long_br_cells = []
+        for ri, row in enumerate(t["body_rows"], 1):
+            for ci, cell in enumerate(row["cells"]):
+                txt = cell.get("text", "").strip()
+                if cell.get("has_br") and len(txt) > 12:
+                    long_br_cells.append(
+                        f"R{ri}C{ci}({len(txt)}字):「{txt[:20]}…」")
+        if long_br_cells:
+            style_warns.append(
+                f"[{tlabel}] {len(long_br_cells)} 个 <td> 含 <br>+长文字"
+                f"(>12字)，可能撑爆列宽导致视觉错位。"
+                f"建议：缩短文字 / 加 table-layout:fixed + word-break。"
+                f"例：{long_br_cells[0]}")
+
+        # 9) 🔴 表格缺 table-layout:fixed 且存在长内容 td → 高错位风险
+        has_fixed_layout = bool(re.search(
+            r'table-layout\s*:\s*fixed', html_text))
+        has_word_break = bool(re.search(
+            r'(?:th|td)\s*\{[^}]*word-break', html_text,
+            re.DOTALL))
+        if (not has_fixed_layout and long_br_cells):
+            struct_warns.append(
+                f"[{tlabel}] 🔴 CSS 错位风险：<table> 缺 "
+                f"`table-layout:fixed`，且有 {len(long_br_cells)} 个长内容 "
+                f"<td>，浏览器会按内容自动分配列宽导致错位！"
+                f"必须加 `table-layout:fixed` + `word-break:break-all`。")
+
+        # 10) 🟡 单个 td 纯文本超长（>40字）无截断控制
+        long_text_cells = []
+        for ri, row in enumerate(t["body_rows"], 1):
+            for ci, cell in enumerate(row["cells"]):
+                txt = cell.get("text", "").strip()
+                if len(txt) > 40 and not cell.get("has_br"):
+                    long_text_cells.append(
+                        f"R{ri}C{ci}({len(txt)}字)")
+        if long_text_cells:
+            style_warns.append(
+                f"[{tlabel}] {len(long_text_cells)} 个 <td> 纯文本超长(>40字)"
+                f"（{long_text_cells[0]}），建议折行或精简文案。")
+
     return struct_warns, style_warns, len(parser.tables)
 
 
