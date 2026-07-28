@@ -1406,6 +1406,63 @@ def scan_requirement_md_tag_mismatch(html_text, prd_path=None):
     return (warns,)
 
 
+def scan_missing_prototype_for_new_features(html_text):
+    """扫描「本期新增/本期改动」功能点是否缺少原型截图（v1.0.25 沉淀自评审）。
+
+    规则 §4.25 MISSING_PROTOTYPE_FOR_NEW_FEATURE：
+    - 遍历 §四 中所有 h4 功能点小节
+    - 若 h4 的 tag 为「本期新增」或「本期改动」（class 包含 tag y）
+    - 检查该 h4 到下一个同级标题之间是否存在 <img> 标签
+    - 无 <img> → 🔴 报缺失：新增/改动功能应有原型截图佐证
+
+    豁免：h4 标题含「引用」「差异」「状态机」「说明」等非页面类关键词。
+    """
+    warns = []
+    # 匹配 h4 及其 tag
+    h4_pattern = re.compile(
+        r'<h4[^>]*>(.+?)<span\s+class="tag[^"]*y[^"]*">(.+?)</span></h4>',
+        re.DOTALL
+    )
+    # 找所有 h4 位置，用于判定"到下一个 h4 之间的内容"
+    h4_positions = []
+    for m in re.finditer(r'<h4', html_text):
+        h4_positions.append(m.start())
+
+    # 豁免关键词（非独立页面的功能点描述）
+    skip_keywords = ['引用', '差异说明', '状态机', '流程', '说明', '附录']
+
+    for m in h4_pattern.finditer(html_text):
+        tag_text = m.group(2).strip()
+        title_text = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+
+        # 只检查「本期新增」和「本期改动」
+        if '本期新增' not in tag_text and '本期改动' not in tag_text:
+            continue
+
+        # 豁免非页面类标题
+        if any(kw in title_text for kw in skip_keywords):
+            continue
+
+        # 确定本节范围：当前 h4 位置 → 下一个 h4 位置（或文件尾）
+        start_pos = m.end()
+        h4_idx = next((i for i, p in enumerate(h4_positions) if p == m.start()), -1)
+        end_pos = html_text.find('<h4', start_pos) if h4_idx >= 0 and h4_idx + 1 < len(h4_positions) else len(html_text)
+        section_html = html_text[start_pos:end_pos]
+
+        # 检查是否有 img
+        has_img = bool(re.search(r'<img\s', section_html))
+
+        if not has_img:
+            warns.append(
+                f"🔴 **「{title_text}」缺少原型截图**："
+                f"\n   该功能点 tag=「{tag_text}」，但 h4 小节内未找到 <img> 原型截图标签。"
+                f"\n   新增/改动功能应附原型截图（列表页 / 表单页 / 交互示意），"
+                f"从对应端口原型文件截取 1440×900 后插入。"
+                f"\n   触发规则 §4.25 MISSING_PROTOTYPE_FOR_NEW_FEATURE")
+
+    return (warns,)
+
+
 def scan_verbose_nfr_warnings(html_text):
     """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
 
@@ -1989,6 +2046,7 @@ def main():
     sl_warns, = scan_scope_leak_feature(raw_html if raw_html else html_text)
     ld_warns, = scan_lazy_function_detail(raw_html if raw_html else html_text)
     rmtm_warns, = scan_requirement_md_tag_mismatch(raw_html if raw_html else html_text, path)
+    mpf_warns, = scan_missing_prototype_for_new_features(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -2230,6 +2288,17 @@ def main():
         print()
     else:
         pass  # 无 MD 文件或无矛盾时不输出
+
+    if mpf_warns:
+        print(f"### 🖼️ 新增/改动功能缺少原型截图（{len(mpf_warns)} 处，§4.25 缺截图）")
+        for w in mpf_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：从对应端口原型 HTML 截取 1440×900 图片，"
+              "以 <img> 标签插入该 h4 小节内（列表页 + 表单页各一张）。")
+        print()
+    else:
+        pass
 
     # ---------- 结论 ----------
     print()
