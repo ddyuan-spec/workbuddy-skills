@@ -345,6 +345,24 @@ meta 关键词清单：
 - 优惠券 PRD V1.0.12 §3.2 的 note 框（📎 权威来源 + ⚠️ 禁止修改）→ V1.0.13 删除
 - 合法保留的 warn/note：含真正未闭环项（如接口名待确认、埋点引用规范说明）
 
+### §4.15 PROTOTYPE_LINK_NOT_IMAGE — 原型示意必须嵌入截图（v1.0.14）
+
+**问题**：PRD §四 功能需求详情中，每个端/模块的「原型示意」使用了 `<a href="...html">文字链接</a>` 而非 `<img>` 截图图片——读者需要额外点击跳转才能看到原型，不符合 PRD 自包含原则。
+
+**规则**：扫描所有「原型示意」位置（3 种格式）：
+- `<p>原型示意：</p><a href=...>` → 🔴 链接
+- `<p>原型示意：<a href=...>` → 🔴 内嵌链接
+- `原型示意…<a href=…>` → 🔴 附近出现链接
+
+若命中且同一上下文（±300 字符）内无 `<img>` 标签 → 判定 **🔴 原型示意应为截图**
+
+**修复方式**：
+1. 用 Edge headless 对原型 HTML 截图：`msedge.exe --headless --disable-gpu --screenshot=out.png --window-size=1280,3000 "file:///path/to/原型.html"`
+2. 将 `<p>原型示意：<a href="xxx.html">xxx</a></p>` 替换为 `<p>原型示意：</p><img src="原型截图/xxx.png" style="max-width:100%;border:1px solid #e0e0e0;border-radius:8px;">`
+3. 截图文件需与 PRD 同目录或子目录（如 `原型截图/`），并推送到 GitHub
+
+**踩坑**：优惠券 PRD V1.0.13 的 4 处原型示意全部为链接形式（coupon-platform / coupon-merchant / coupon-app / coupon-mini-h5），V1.0.14 全部替换为 Edge headless 截图。
+
 ## 文件说明
 
 - `references/prd-structure.md`：必含板块 一~九 清单与判定口径（唯一依据），含 D 板块深度门槛与不确定性红线。
