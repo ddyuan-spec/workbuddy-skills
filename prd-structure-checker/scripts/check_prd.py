@@ -218,6 +218,159 @@ def scan_diagram_consistency(text):
     return found, checklist
 
 
+# ---------------------------------------------------------------------------
+# 阶段4 扩展：表格质量扫描
+# 沉淀自 PRD 评审常见表格异常：结构错误、渲染塌陷、排版不一致
+# ---------------------------------------------------------------------------
+def scan_table_quality(html_text):
+    """扫描 HTML 中所有 <table> 的结构/排版异常。
+
+    检测项分两级：
+      🔴 结构性（必须修）：表头列数不匹配、空单元格无占位符
+      🟡 排版风险（建议修）：td 内换行/内联样式、缺说明、colspan/rowspan
+
+    返回 (struct_warns, style_warns, table_count)。
+    """
+    from html.parser import HTMLParser
+
+    class _TableParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tables = []
+            self._cur = None
+            self._in_thead = False
+            self._in_tbody = False
+            self._cur_row = []
+            self._row_cells = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "table":
+                self._cur = {"has_thead": False, "has_caption": False,
+                             "head_cols": [], "body_rows": [],
+                             "empty_tds": [], "br_in_td": [],
+                             "inline_style_in_td": [], "has_colspan_rowspan": False}
+                self.tables.append(self._cur)
+            elif tag == "caption" and self._cur:
+                self._cur["has_caption"] = True
+            elif tag == "thead" and self._cur:
+                self._in_thead = True
+                self._cur["has_thead"] = True
+            elif tag == "tbody" and self._cur:
+                self._in_tbody = True
+            elif tag in ("tr",) and self._cur:
+                self._cur_row = []
+                self._row_cells = 0
+            elif tag in ("td", "th") and self._cur:
+                self._cur_row.append({"tag": tag, "text": "", "colspan": 1,
+                                       "has_br": False, "has_inline_style": False,
+                                       "is_empty": True})
+                for k, v in attrs:
+                    if k == "colspan":
+                        try: self._cur_row[-1]["colspan"] = int(v)
+                        except ValueError: pass
+                cs = self._cur_row[-1]["colspan"]
+                if cs > 1:
+                    self._cur["has_colspan_rowspan"] = True
+                self._row_cells += cs
+
+        def handle_endtag(self, tag):
+            if tag == "thead":
+                # flush 未关闭 tr（某些 HTML 中 </tr> 可能在 </thead> 之后）
+                if self._row_cells > 0 and self._cur:
+                    self._cur["head_cols"].append(self._row_cells)
+                    self._cur_row = []
+                    self._row_cells = 0
+                self._in_thead = False
+            elif tag == "tbody":
+                self._in_tbody = False
+            elif tag == "tr" and self._cur:
+                if self._in_thead:
+                    if self._row_cells > 0:
+                        self._cur["head_cols"].append(self._row_cells)
+                elif self._in_tbody or not self._in_thead:
+                    row_info = {"cols": self._row_cells, "cells": list(self._cur_row)}
+                    self._cur["body_rows"].append(row_info)
+                self._cur_row = []
+                self._row_cells = 0
+            elif tag in ("td", "th") and self._cur_row:
+                cell = self._cur_row[-1]
+                txt = cell["text"].strip()
+                cell["is_empty"] = not bool(txt)
+                if (cell["is_empty"] and
+                    (self._in_tbody or (not self._in_thead and self._cur.get("body_rows")))):
+                    self._cur["empty_tds"].append("(空)")
+                if cell["has_br"]:
+                    self._cur["br_in_td"].append(txt[:30] or "(含br)")
+                if cell["has_inline_style"]:
+                    self._cur["inline_style_in_td"].append(txt[:30] or "(含style)")
+
+        def handle_data(self, data):
+            if self._cur_row:
+                self._cur_row[-1]["text"] += data
+                if "<br" in data or "\n" in data:
+                    self._cur_row[-1]["has_br"] = True
+                if "style=" in data:
+                    self._cur_row[-1]["has_inline_style"] = True
+
+    parser = _TableParser()
+    try:
+        parser.feed(html_text)
+    except Exception:
+        return [], [], 0
+
+    struct_warns = []
+    style_warns = []
+
+    for idx, t in enumerate(parser.tables, 1):
+        tlabel = f"表格#{idx}"
+        # 跳过非数据表格：
+        #   a) 极小表格（≤1 行数据，通常是状态/指标小表）
+        #   b) 无 thead 的宽表（通常是属性-值型信息卡，如文档头/参数表）
+        is_info_card = (not t["has_thead"] and
+                        len(t["body_rows"]) > 0 and
+                        all(r["cols"] <= 2 for r in t["body_rows"]))
+        if len(t["body_rows"]) <= 1 or is_info_card:
+            continue
+
+        head_set = set(t["head_cols"]) if t["head_cols"] else set()
+        ref_cols = t["head_cols"][0] if t["head_cols"] else 0
+
+        # 🔴 1) thead 内行列数不一致
+        if len(head_set) > 1:
+            struct_warns.append(
+                f"[{tlabel}] thead 各行列数不一致（{t['head_cols']}），表头错乱")
+        # 🔴 2) 数据行与表头列数不匹配
+        for ri, row in enumerate(t["body_rows"], 1):
+            if row["cols"] != 0 and row["cols"] != ref_cols:
+                struct_warns.append(
+                    f"[{tlabel}] 数据行第{ri}行({row['cols']}列)≠表头({ref_cols}列)，渲染必错位")
+        # 🔴 3) 空单元格无占位符
+        empty_count = sum(1 for r in t["body_rows"] for c in r["cells"]
+                          if c.get("is_empty") and c["tag"] == "td")
+        if empty_count > 0:
+            struct_warns.append(
+                f"[{tlabel}] {empty_count} 个空 <td> 无占位符（建议填「—」），可能塌陷")
+
+        # 🟡 4) 缺 thead
+        if not t["has_thead"]:
+            style_warns.append(f"[{tlabel}] 缺少 <thead>，表头无语义区分")
+        # 🟡 5) td 内 <br>
+        if t["br_in_td"]:
+            style_warns.append(
+                f"[{tlabel}] {len(t['br_in_td'])} 个 <td> 含 <br> 换行"
+                f"（例：{t['br_in_td'][0]}…）")
+        # 🟡 6) 内联 style
+        if t["inline_style_in_td"]:
+            style_warns.append(
+                f"[{tlabel}] {len(t['inline_style_in_td'])} 个 <td> 用内联 style"
+                f"（例：{t['inline_style_in_td'][0]}…）")
+        # 🟡 7) colspan/rowspan
+        if t["has_colspan_rowspan"]:
+            style_warns.append(f"[{tlabel}] 使用 colspan/rowspan，注意跨行对齐")
+
+    return struct_warns, style_warns, len(parser.tables)
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法：python check_prd.py <prd文件>")
@@ -229,6 +382,13 @@ def main():
 
     text = get_text(path)
     norm = text.lower()
+
+    # 表格扫描需要原始 HTML（含标签），仅对 HTML 文件生效
+    raw_html = ""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in ('.html', '.htm'):
+        with open(path, encoding='utf-8', errors='ignore') as f:
+            raw_html = f.read()
 
     print("# PRD 结构排查报告")
     print()
@@ -304,6 +464,7 @@ def main():
     ut = scan_uncertain_traceability(text)
     tv = scan_tracking_v23(text, norm)
     dg_found, dg_check = scan_diagram_consistency(text)
+    tq_struct, tq_style, tq_cnt = scan_table_quality(raw_html) if raw_html else ([], [], 0)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -337,6 +498,23 @@ def main():
     else:
         print("（未检测到图说关键词，跳过图文一致性核对）")
 
+    # 表格质量扫描
+    if tq_cnt > 0:
+        if tq_struct:
+            print(f"### 📋 表格结构性异常（{len(tq_struct)} 处，必须修）")
+            for w in tq_struct:
+                print(f"- 🔴 {w}")
+            print()
+        if tq_style:
+            print(f"### 📋 表格排版风险（{len(tq_style)} 处，建议修）")
+            for w in tq_style:
+                print(f"- 🟡 {w}")
+            print()
+        if not tq_struct and not tq_style:
+            print("✅ 全部表格结构正常、排版规范。")
+    else:
+        print("（未检测到 <table> 标签，跳过表格质量扫描）")
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -365,9 +543,10 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
-    red_total = len(rl) + len(ut) + len(tv)
+    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct)
     if red_total:
-        print(f"⚠️ **阶段4 发现 {red_total} 处红线/一致性风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)} / 埋点规范 {len(tv)}）："
+        print(f"⚠️ **阶段4 发现 {red_total} 处风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)}"
+              f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}）："
               "须逐项确认或修正后再定稿。")
     print()
 
