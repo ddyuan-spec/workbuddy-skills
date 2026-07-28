@@ -912,9 +912,11 @@ def scan_prototype_image_valid(html_text, prd_path=None):
     """
     warns = []
 
-    # 定位所有「原型示意」段落中的 <img> 标签
+    # 找所有「原型示意」中的 <img>（可能在同一段落或下一段落）
+    # 格式1: 原型示意：</p><p><img ...>  （跨段落）
+    # 格式2: 原型示意：<img ...>      （同段落）
     proto_sections = re.finditer(
-        r'原型示意\s*[:：][^<]{0,100}?(<img\s[^>]*>)',
+        r'原型示意\s*[:：][^<]{0,200}?(?:</p>\s*<p>)?\s*(<img\s[^>]*>)',
         html_text, re.IGNORECASE
     )
 
@@ -968,6 +970,8 @@ def scan_prototype_image_valid(html_text, prd_path=None):
             missing = []
             if 'max-width' not in style_val:
                 missing.append('max-width（响应式缩放）')
+            if 'max-height' not in style_val:
+                missing.append('max-height（高度上限，防超大图撑爆页面）')
             if 'border' not in style_val:
                 missing.append('border（可见边框）')
             if missing:
@@ -975,7 +979,7 @@ def scan_prototype_image_valid(html_text, prd_path=None):
                     f"🟡 **原型截图 style 不完整**（src=\"{src}\"）："
                     f"缺少 {', '.join(missing)}。"
                     f"\n   当前 style=\"{style_match.group(1)}\""
-                    f"\n   建议补全为 style=\"max-width:100%;border:1px solid #e0e0e0;border-radius:8px;\"")
+                    f"\n   建议补全为 style=\"max-width:100%;max-height:800px;border:1px solid #e0e0e0;border-radius:8px;object-fit:contain;\"")
 
         # 检查 ③ alt 属性
         alt_match = re.search(r'alt=["\']([^"\']*)["\']', img_tag, re.IGNORECASE)
@@ -984,6 +988,96 @@ def scan_prototype_image_valid(html_text, prd_path=None):
                 f"🟡 **原型截图 <img> 缺少 alt 属性**（src=\"{src}\"）："
                 f"建议添加 alt=\"xxx端原型\" 以满足无障碍/语义化要求。"
                 f"\n   触发规则 §4.16 PROTOTYPE_IMAGE_INVALID（语义规范）。")
+
+    return (warns,)
+
+
+def _read_png_dimensions(filepath):
+    """读取 PNG 文件的像素宽高（从 IHDR chunk 解析）。返回 (w, h) 或 (None, None)。"""
+    try:
+        with open(filepath, 'rb') as f:
+            data = f.read(25)
+            if data[:8] != b'\x89PNG\r\n\x1a\n':
+                return None, None
+            import struct
+            w = struct.unpack('>I', data[16:20])[0]
+            h = struct.unpack('>I', data[20:24])[0]
+            return w, h
+    except Exception:
+        return None, None
+
+
+def scan_prototype_image_oversized(html_text, prd_path=None):
+    """扫描「原型示意」截图像素尺寸是否过大（v1.0.17 沉淀自评审）。
+
+    规则 §4.17 PROTOTYPE_IMAGE_OVERSIZED：
+    原型截图若像素高度 > 1200px（或宽度 > 1920px），在 PRD 页面中渲染后会产生大量空白，
+    严重影响阅读体验（读者需要大量滚动才能看到后续内容）。
+    典型场景：Edge headless 截图时 --window-size 设得太大（如 1280x3000 整页滚动）。
+
+    阈值：
+      - 高度 > 1200px → 🔴 超高（建议 max-height:800px + 重新裁剪/截图）
+      - 宽度 > 1920px → 🟡 过宽（通常不影响但浪费空间）
+
+    参数：
+      html_text: PRD HTML 全文
+      prd_path: PRD 文件绝对路径（用于解析 img src 相对路径）
+
+    返回 (warns, ) —— 单元组。
+    """
+    warns = []
+    MAX_H = 1200   # px，超过此值认为过高
+    MAX_W = 1920   # px，超过此值认为过宽
+
+    base_dir = ''
+    if prd_path:
+        base_dir = os.path.dirname(os.path.abspath(prd_path))
+
+    # 找所有「原型示意」中的 <img>
+    for m in re.finditer(
+        r'原型示意\s*[:：][^<]{0,200}?(?:</p>\s*<p>)?\s*(<img\s[^>]*>)',
+        html_text, re.IGNORECASE
+    ):
+        img_tag = m.group(1)
+        src_match = re.search(r'src=["\']([^"\']+)["\']', img_tag, re.IGNORECASE)
+        if not src_match:
+            continue
+        src = src_match.group(1)
+
+        # 只检查本地文件（跳过 http/data URI）
+        if src.startswith(('http://', 'https://', 'data:')):
+            continue
+        if not base_dir:
+            continue
+
+        abs_path = os.path.join(base_dir, src)
+        abs_path = os.path.normpath(abs_path)
+
+        if not os.path.isfile(abs_path):
+            continue  # 文件不存在由 §4.16 报告
+
+        w, h = _read_png_dimensions(abs_path)
+        if w is None or h is None:
+            continue  # 非 PNG 文件跳过
+
+        issues = []
+        if h > MAX_H:
+            issues.append(f'**高度 {h}px**（阈值 {MAX_H}px）→ 渲染后页面产生大量空白')
+        if w > MAX_W:
+            issues.append(f'宽度 {w}px**（阈值 {MAX_W}px）')
+
+        if issues:
+            severity = '🔴' if h > MAX_H else '🟡'
+            fix_hint = (
+                f"\n   **立即修复**：给 <img> 加 `max-height:800px;object-fit:contain;` 约束渲染高度；"
+                f"或用 Edge headless 重新截图时缩小 --window-size 高度参数。"
+                f"\n   典型原因：截图时用了整页滚动高度（如 --window-size=1280,3000），"
+                f"导致 PNG 包含大量无效空白区域。")
+            warns.append(
+                f"{severity} **原型截图尺寸过大**（src=\"{src}\"，实际 {w}×{h} px）："
+                f"{'; '.join(issues)}"
+                f"\n   触发规则 §4.17 PROTOTYPE_IMAGE_OVERSIZED："
+                f"{fix_hint}")
 
     return (warns,)
 
@@ -1333,6 +1427,7 @@ def main():
     rw_warns, rw_fixes = scan_resolved_warn_boxes(raw_html if raw_html else html_text)
     pl_warns, = scan_prototype_link_instead_of_image(raw_html if raw_html else html_text)
     pi_warns, = scan_prototype_image_valid(raw_html if raw_html else html_text, path)
+    po_warns, = scan_prototype_image_oversized(raw_html if raw_html else html_text, path)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1478,10 +1573,21 @@ def main():
             print(f"- {w}")
             print()
         print("处理要求：确保截图文件存在本地+已推送到 GitHub、"
-              "<img> 含 style(max-width+border) + alt 属性。")
+              "<img> 含 style(max-width+max-height+border) + alt 属性。")
         print()
     else:
         print("✅ 所有「原型示意」截图文件存在、样式规范、语义完整。")
+
+    if po_warns:
+        print(f"### 📐 原型截图尺寸检查（{len(po_warns)} 处，§4.17 超大图/空白）")
+        for w in po_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：给 <img> 加 max-height:800px;object-fit:contain; "
+              "或重新截图缩小 --window-size 高度参数。")
+        print()
+    else:
+        print("✅ 所有「原型示意」截图尺寸合理（高度≤1200px，无超大空白）。")
 
     # ---------- 结论 ----------
     print()
