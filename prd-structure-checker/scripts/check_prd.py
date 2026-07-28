@@ -547,6 +547,126 @@ def scan_scope_tagging(plain_text):
     return warns, infos
 
 
+# ---------------------------------------------------------------------------
+# 阶段4 扩展：待确认项卫生 + 状态机前后矛盾扫描
+# 沉淀自优惠券 PRD v1.0.7 评审：
+#   - 状态机转换表出现「某状态既声明无编辑/编辑被替换，又保留该状态编辑行」
+#     → 前后矛盾（已下架等终态若禁止变相上架，应直接移除编辑行）
+#   - 待确认项提出「编辑能否变相上架 / 重新上架 / 重新启用」类提问
+#     → 与正文已定的「设计如此」决策冲突，不应作为待确认项
+# ---------------------------------------------------------------------------
+def scan_pending_hygiene(plain_text, html_text=""):
+    """待确认项卫生与状态机前后矛盾扫描。
+
+    检测项：
+      🔴 必须修：
+        1) 状态机转换表中，某起始状态既存在「编辑」行，又在其它行
+           声明「无编辑 / 编辑已替换 / 无…编辑需求」→ 前后矛盾
+        2) 同一「起始状态 → 触发动作」映射到不同目标状态 → 重复/写反
+        3) 待确认项提出「变相上架 / 重新上架 / 重新启用」类提问，
+           与正文已定「设计如此」决策冲突（这类问题不构成待确认项）
+      🟡 建议查：
+        4) 待确认项提及对已有/沿用功能动作的权限提问（编辑/下架/删除
+           + 是否允许/可否），疑似与现有功能冲突，需人工确认归属
+
+    返回 (warns, infos)。
+    """
+    import re as _re
+    warns = []
+    infos = []
+
+    def _strip_tags(s):
+        return _re.sub(r'<[^>]+>', '', s or '')
+
+    # ---------- A) 状态机转换表前后矛盾 ----------
+    if html_text:
+        tables = _re.findall(r'<table>.*?</table>', html_text, _re.DOTALL)
+        sm_table = None
+        for tb in tables:
+            if '起始状态' in tb and '触发动作' in tb:
+                sm_table = tb
+                break
+        if sm_table:
+            rows = _re.findall(r'<tr>(.*?)</tr>', sm_table, _re.DOTALL)
+            parsed = []
+            for r in rows:
+                cells = _re.findall(r'<td[^>]*>(.*?)</td>', r, _re.DOTALL)
+                cells = [_strip_tags(c) for c in cells]
+                if len(cells) >= 5:
+                    parsed.append({
+                        'from': cells[0].strip(),
+                        'action': cells[1].strip(),
+                        'to': cells[4].strip(),
+                        'btn': cells[-1].strip() if len(cells) > 5 else '',
+                    })
+            state_edit_rows = {}
+            state_noedit_claim = {}
+            for p in parsed:
+                s = p['from']
+                if s in ('—', '-', '', '任意'):
+                    continue
+                if p['action'] == '编辑':
+                    state_edit_rows.setdefault(s, p)
+                if _re.search(r'无编辑|编辑.*替换|无.*编辑需求|不提供.*编辑|编辑.*已替换',
+                              p['btn'] + ' ' + p['to']):
+                    state_noedit_claim.setdefault(s, p)
+            for s, er in state_edit_rows.items():
+                if s in state_noedit_claim:
+                    nc = state_noedit_claim[s]
+                    warns.append(
+                        f"🔴 状态机前后矛盾：状态「{s}」转换表既存在「编辑」行"
+                        f"（{er['from']}→{er['action']}→{er['to']}），"
+                        f"又在其它行声明「无编辑 / 编辑已替换」"
+                        f"（如：「{nc['btn'][:40]}」）。两者冲突——"
+                        f"终态若禁止变相上架，应直接移除编辑行，"
+                        f"而非同时保留编辑行与「无编辑」声明。")
+            # 同 (from, action) 不同 to
+            seen = {}
+            for p in parsed:
+                if p['from'] in ('—', '-', '', '任意') or p['action'] in ('—', '-', ''):
+                    continue
+                key = (p['from'], p['action'])
+                if key in seen and seen[key] != p['to']:
+                    warns.append(
+                        f"🔴 状态机前后矛盾：同一「{key[0]} → {key[1]}」"
+                        f"映射到不同目标状态（{seen[key]} 与 {p['to']}），"
+                        f"请核对是否写反或重复。")
+                else:
+                    seen[key] = p['to']
+
+    # ---------- B) 待确认项卫生 ----------
+    # B1) 与「设计如此」决策冲突：提出「变相上架 / 重新上架」类提问。
+    #     判定：relist 词附近同时含疑问词（？/是否/可否/能否/允许），
+    #           且不在否定语境（设计如此/非待确认/不构成待确认项/已裁定）。
+    #     否定说明句（如「结构上杜绝变相上架，故不构成待确认项」）会被排除。
+    relist_kw = _re.compile(r'变相上架|重新上架|重新启用|恢复上架')
+    interr = _re.compile(r'[？?]|是否|可否|能否|允许')
+    neg_ctx = _re.compile(r'不构成待确认项|非待确认|设计如此|已裁定|既定设计|为既定|不是待确认项')
+    for m in relist_kw.finditer(plain_text):
+        seg = plain_text[max(0, m.start() - 50): m.end() + 50]
+        if interr.search(seg) and not neg_ctx.search(seg):
+            warns.append(
+                f"🔴 待确认项与「设计如此」决策冲突（「…{seg.strip()}…」）："
+                f"若正文已裁定无「重新上架/启用」路径（下架即终态），"
+                f"则「变相上架/重新上架」类问题不构成待确认项，"
+                f"应写为既定设计说明，而非待确认项。")
+    # B2) 疑似与现有功能冲突（仅对真正的待确认项标记做宽松提示）
+    gen_markers = _re.findall(
+        r'⚠️\s*待确认[^<\n]{0,60}|待确认项[:：][^<\n]{0,60}|待确认：[^<\n]{0,60}',
+        plain_text)
+    conflict_kw = _re.compile(
+        r'(编辑|下架|删除|新增|上架|启用|停用).{0,10}(是否|能否|允许|可否|限制|禁止)')
+    for seg in gen_markers:
+        if conflict_kw.search(seg):
+            infos.append(
+                f"💡 待确认项疑似与现有功能冲突：「{seg.strip()}…」。"
+                f"若所问动作（编辑/下架/删除等）属已标「已有/沿用」功能，"
+                f"其是否允许应由既有实现决定；若属本期新增/改动，"
+                f"请标注「本期新增」并写清规则，而非含糊待确认。")
+
+    return warns, infos
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -794,6 +914,7 @@ def main():
     fd_warns, fd_infos = scan_flow_diagram_consistency(raw_html if raw_html else html_text, text)
     sm_warns, sm_infos = scan_state_machine(text, raw_html if raw_html else html_text)
     st_warns, st_infos = scan_scope_tagging(text)
+    ph_warns, ph_infos = scan_pending_hygiene(text, raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -896,6 +1017,21 @@ def main():
     else:
         print("✅ 全部功能点已标注范围（已有/新增/改动）。")
 
+    # 待确认项卫生 + 状态机前后矛盾扫描
+    if ph_warns or ph_infos:
+        print(f"### 🧹 待确认项卫生 / 状态机前后矛盾（{len(ph_warns)} 告警 / {len(ph_infos)} 提示）")
+        for w in ph_warns:
+            print(f"- {w}")
+            print()
+        for i in ph_infos:
+            print(f"- 💡 {i}")
+        print()
+        print("处理要求：待确认项不得与「设计如此/已有-沿用」决策冲突，"
+              "不得前后矛盾（状态机同一状态不能既声明无编辑又保留编辑行）。")
+        print()
+    else:
+        print("✅ 待确认项无与现有功能/设计决策冲突，状态机无前后矛盾。")
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -924,12 +1060,13 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
-    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns) + len(sm_warns) + len(st_warns)
+    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns) + len(sm_warns) + len(st_warns) + len(ph_warns)
     if red_total:
         print(f"⚠️ **阶段4 发现 {red_total} 处风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)}"
               f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}"
               f" / 冗余声明 {len(rd_hits)} / 流程图一致性 {len(fd_warns)}"
-              f" / 状态机完整性 {len(sm_warns)} / 功能范围标注 {len(st_warns)}）："
+              f" / 状态机完整性 {len(sm_warns)} / 功能范围标注 {len(st_warns)}"
+              f" / 待确认项卫生 {len(ph_warns)}）："
               "须逐项确认或修正后再定稿。")
     print()
 
