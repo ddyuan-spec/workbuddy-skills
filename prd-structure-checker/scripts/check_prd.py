@@ -1621,6 +1621,47 @@ def scan_modal_popup_missing_screenshot(html_text):
             )
 
     return (warns,)
+
+
+def scan_screenshot_duplicates(html_text, base_dir=None):
+    """扫描 PRD 引用的本地截图是否存在「内容完全相同」的情况（v1.0.30 沉淀自评审）。
+
+    规则 §4.30 SCREENSHOT_DUPLICATE_DETECTION：
+    - 多张截图字节（md5）完全一致时，导入 Word/钉钉等容器会被去重为 1 张，
+      导致其余视图「看起来有图、实际缺失」，常规存在性检测发现不了。
+    - 常见于：截原型时视图未正确切换（如仍停在首页默认视图）、弹窗未触发即截图。
+    - 检测：提取所有 <img src> 对应的本地 PNG，按 md5 分组，组内 >1 张 → 🔴 报重复。
+
+    依赖：base_dir 为 PRD 文件所在目录（用于解析相对 src）。
+    """
+    import hashlib
+    from collections import defaultdict
+    warns = []
+    if not base_dir or not os.path.isdir(base_dir):
+        return warns
+    imgs = re.findall(r'<img[^>]*src="([^"]+)"', html_text)
+    groups = defaultdict(list)
+    for src in imgs:
+        p = os.path.join(base_dir, src)
+        if os.path.exists(p):
+            try:
+                h = hashlib.md5(open(p, 'rb').read()).hexdigest()
+                groups[h].append(os.path.basename(p))
+            except Exception:
+                pass
+    for h, members in groups.items():
+        if len(members) > 1:
+            warns.append(
+                f"🔴 **检测到 {len(members)} 张截图内容完全相同（疑似截取失败）**："
+                f"\n   {', '.join(members)}"
+                f"\n   这些 PNG 字节（md5）完全一致，导入 Word/钉钉时会被去重为 1 张，"
+                f"导致其余视图缺图（存在性检测发现不了）。"
+                f"\n   请重新从原型截取对应视图：确认页面已正确切换 / 弹窗已触发后再截图，"
+                f"保证每张图内容独立、md5 不同。"
+                f"\n   触发规则 §4.30 SCREENSHOT_DUPLICATE_DETECTION")
+    return warns
+
+
     """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
 
     规则 §4.21 VERBOSE_NFR_WARNING：
@@ -2864,6 +2905,19 @@ def main():
             print()
         print("处理要求：删除所有绿色 ✅ 验证备注/方案确认/截图验证等开发调试笔记。"
               "如为必要业务规则说明，改写为正式表述（去掉 ✅ 前缀和括号备注格式）。")
+        print()
+
+    # ---------- 阶段5（扩展）：重复截图检测 ----------
+    sdup_warns = scan_screenshot_duplicates(
+        raw_html if raw_html else html_text,
+        os.path.dirname(path) if path else None)
+    if sdup_warns:
+        print(f"### 🔁 重复截图检测（{len(sdup_warns)} 处，§4.30 重复截图）")
+        for w in sdup_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：重新从原型截取重复视图，确保每张图内容独立、md5 不同"
+              "（导入 Word/钉钉后才不会因去重而缺图）。")
         print()
 
     # ---------- 自动补图（--auto-fill）----------
