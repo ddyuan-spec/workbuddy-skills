@@ -1662,6 +1662,113 @@ def scan_screenshot_duplicates(html_text, base_dir=None):
     return warns
 
 
+def scan_screenshot_view_mismatch(html_text, base_dir=None):
+    """扫描 PRD 截图是否「内容与功能点视图不匹配」（v1.0.32 沉淀自评审）。
+
+    规则 §4.31 SCREENSHOT_VIEW_MISMATCH：
+    - 截图存在、路径正确、md5 也唯一（通过 §4.30），但实际显示的是错误视图
+      （如商品详情功能点贴了首页菜单截图）
+    - 常见于：Edge headless 截图时原型视图未切换（go() 未执行 / 时序不够 /
+      注入脚本未生效），截到了默认首页
+    - 检测方法：采集每个原型的「首页基准 md5」→ 逐图比对 → 命中则 🔴
+
+    依赖：base_dir 为 PRD 文件所在目录。
+    """
+    import hashlib, json, subprocess, tempfile
+    from collections import defaultdict
+
+    blockers = []
+    if not base_dir or not os.path.isdir(base_dir):
+        return blockers
+
+    # 1. 提取所有 <img src> 中的本地 PNG
+    imgs = re.findall(r'<img[^>]*src="([^"]+)"', html_text)
+    img_md5_map = {}  # basename -> md5
+    for src in imgs:
+        p = os.path.join(base_dir, src)
+        if os.path.exists(p) and p.lower().endswith('.png'):
+            try:
+                h = hashlib.md5(open(p, 'rb').read()).hexdigest()
+                img_md5_map[os.path.basename(p)] = {'md5': h, 'path': p, 'src': src}
+            except Exception:
+                pass
+
+    if not img_md5_map:
+        return blockers
+
+    # 2. 发现原型 HTML 文件（从同目录找）
+    proto_files = []
+    for f in os.listdir(base_dir):
+        fp = os.path.join(base_dir, f)
+        if f.endswith('.html') and '原型' in f and os.path.isfile(fp):
+            proto_files.append(fp)
+
+    # 3. 采集每个原型的「首页基准 md5」（无注入的默认视图）
+    baseline_cache = {}  # proto_path -> home_md5
+    baseline_cache_path = os.path.join(base_dir, '.screenshot_baseline.json')
+    cached = {}
+    if os.path.exists(baseline_cache_path):
+        try:
+            with open(baseline_cache_path, 'r', encoding='utf-8') as cf:
+                cached = json.load(cf)
+        except Exception:
+            pass
+
+    edge_exe = detect_edge_exe()
+    for proto_path in proto_files:
+        proto_key = os.path.abspath(proto_path)
+        if proto_key in cached:
+            baseline_cache[proto_path] = cached[proto_key]
+            continue
+        # 截取默认视图（无注入）作为基准
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False, dir=base_dir) as tmp:
+                tmp_path = tmp.name
+            cmd = [edge_exe, '--headless=new', '--disable-gpu',
+                   '--screenshot=os.path.realpath(tmp_path)',
+                   '--window-size=1440,900', '--virtual-time-budget=1500',
+                   'file:///' + proto_path.replace(os.sep, '/')]
+            subprocess.run(cmd, capture_output=True, timeout=30)
+            if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 1000:
+                h = hashlib.md5(open(tmp_path, 'rb').read()).hexdigest()
+                baseline_cache[proto_path] = h
+                cached[proto_key] = h
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+    # 写回缓存
+    if cached:
+        try:
+            with open(baseline_cache_path, 'w', encoding='utf-8') as cf:
+                json.dump(cached, cf, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    if not baseline_cache:
+        return blockers
+
+    # 4. 逐图比对：是否有截图命中了某原型的首页基准 md5
+    home_md5_set = set(baseline_cache.values())
+    for basename, info in img_md5_map.items():
+        if info['md5'] in home_md5_set:
+            # 找出是哪个原型的首页
+            for proto_path, home_md5 in baseline_cache.items():
+                if info['md5'] == home_md5:
+                    proto_name = os.path.basename(proto_path)
+                    blockers.append(
+                        f"🔴 **截图视图不匹配**：`{basename}` 的内容与 `{proto_name}` "
+                        f"的**默认首页视图完全一致**（md5: {info['md5'][:8]}…）。"
+                        f"\n   该截图应显示对应功能点的特定页面/弹窗，而非原型首页。"
+                        f"\n   请确认该截图对应的 h4 功能点标题，重新从原型截取正确视图。"
+                        f"\n   修复：在原型副本 </body> 前注入切换脚本后重截，"
+                        f"并验证新 md5 ≠ 首页基准 md5。"
+                        f"\n   触发规则 §4.31 SCREENSHOT_VIEW_MISMATCH")
+                    break
+
+    return blockers
+
+
     """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
 
     规则 §4.21 VERBOSE_NFR_WARNING：
@@ -2918,6 +3025,19 @@ def main():
             print()
         print("处理要求：重新从原型截取重复视图，确保每张图内容独立、md5 不同"
               "（导入 Word/钉钉后才不会因去重而缺图）。")
+        print()
+
+    # ---------- 阶段5（扩展）：截图视图不匹配检测 ----------
+    svm_blockers = scan_screenshot_view_mismatch(
+        raw_html if raw_html else html_text,
+        os.path.dirname(path) if path else None)
+    if svm_blockers:
+        print(f"### 🎯 截图视图不匹配（{len(svm_blockers)} 处，§4.31 视图不匹配）")
+        for w in svm_blockers:
+            print(f"- {w}")
+            print()
+        print("处理要求：确认该功能点应在原型中显示的视图，用注入切换脚本的方式重截，"
+              "并验证新截图 md5 ≠ 原型首页基准 md5。")
         print()
 
     # ---------- 自动补图（--auto-fill）----------
