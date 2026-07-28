@@ -1134,6 +1134,74 @@ def scan_reuse_function_verbose(html_text):
     return (warns,)
 
 
+def _read_png_dimensions(filepath):
+    """读取 PNG 文件的像素宽高（不依赖 PIL）。返回 (w, h) 或 (None, None)。"""
+    try:
+        with open(filepath, 'rb') as f:
+            data = f.read(25)
+        if data[:8] != b'\x89PNG\r\n\x1a\n':
+            return None, None
+        w = struct.unpack('>I', data[16:20])[0]
+        h = struct.unpack('>I', data[20:24])[0]
+        return w, h
+    except Exception:
+        return None, None
+
+
+def scan_prototype_screen_ratio(html_text, prd_path=None):
+    """扫描原型截图是否使用了正确的屏幕尺寸比例（v1.0.20 沉淀自评审）。
+
+    规则 §4.19 PROTOTYPE_SCREEN_RATIO：
+    - **PC 端后台**原型截图（platform / merchant）应使用桌面分辨率：
+      宽 ≥1000px，推荐 1440×900。若宽度 <800px → 🔴 移动端比例误用于 PC 端
+    - **移动端 C 端**原型截图（app / mini-h5 / mobile）应使用手机分辨率：
+      宽 ≤500px，推荐 390×844。若宽度 >800px → 🔴 PC 端比例误用于移动端
+
+    判定依据：从 <img src="..."> 的文件名推断终端类型。
+    """
+    warns = []
+    if not prd_path:
+        return (warns,)
+
+    prd_dir = os.path.dirname(os.path.abspath(prd_path))
+
+    # 终端类型判定：文件名关键词 → 预期宽度范围
+    pc_keywords = ['platform', 'merchant', 'admin', 'backend', 'pc', 'desktop']
+    mobile_keywords = ['app', 'mini', 'mobile', 'h5', 'phone', 'ios', 'android']
+
+    for m in re.finditer(r'<img\s[^>]*src=["\']([^"\']+)["\']', html_text, re.IGNORECASE):
+        src = m.group(1)
+        src_lower = src.lower()
+
+        # 判定预期终端类型
+        is_pc = any(kw in src_lower for kw in pc_keywords)
+        is_mobile = any(kw in src_lower for kw in mobile_keywords)
+        if not is_pc and not is_mobile:
+            continue
+
+        abs_path = os.path.join(prd_dir, src)
+        abs_path = os.path.normpath(abs_path)
+        w, h = _read_png_dimensions(abs_path)
+
+        if w is None:
+            continue
+
+        if is_pc and w < 800:
+            warns.append(
+                f"🔴 **PC 端后台原型截图使用了移动端比例**（src=\"{src}\"）："
+                f"\n   实际 {w}×{h} px（宽度 <800px），但文件名含 PC 端关键词。"
+                f"\n   应使用桌面分辨率重新截图（推荐 1440×900 或 1920×1080）。"
+                f"\n   触发规则 §4.19 PROTOTYPE_SCREEN_RATIO")
+        elif is_mobile and w > 800:
+            warns.append(
+                f"🔴 **移动端 C 端原型截图使用了 PC 桌面比例**（src=\"{src}\"）："
+                f"\n   实际 {w}×{h} px（宽度 >800px），但文件名含移动端关键词。"
+                f"\n   应使用手机分辨率重新截图（推荐 390×844 或 375×812）。"
+                f"\n   触发规则 §4.19 PROTOTYPE_SCREEN_RATIO")
+
+    return (warns,)
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -1481,6 +1549,7 @@ def main():
     pi_warns, = scan_prototype_image_valid(raw_html if raw_html else html_text, path)
     po_warns, = scan_prototype_image_oversized(raw_html if raw_html else html_text, path)
     rv_warns, = scan_reuse_function_verbose(raw_html if raw_html else html_text)
+    sr_warns, = scan_prototype_screen_ratio(raw_html if raw_html else html_text, path)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1652,6 +1721,17 @@ def main():
         print()
     else:
         print("✅ 所有「已有-沿用」功能点均只写标准文案，无冗余赘述。")
+
+    if sr_warns:
+        print(f"### 🖥️ 原型截图屏幕比例检查（{len(sr_warns)} 处，§4.19 屏幕比例）")
+        for w in sr_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：PC 端后台截图用桌面分辨率（1440×900），"
+              "移动端 C 端截图用手机分辨率（390×844）。")
+        print()
+    else:
+        print("✅ 所有原型截图屏幕比例正确（PC端≥1000px / 移动端≤500px）。")
 
     # ---------- 结论 ----------
     print()
