@@ -348,6 +348,48 @@ def scan_flow_diagram_consistency(html_text, plain_text):
             else:
                 infos.append(f"流程图节点对正文功能模块覆盖度约 {coverage:.0f}% ✅")
 
+        # 5) 🔴 流程图防篡改检测（v1.0.11 沉淀自评审）
+        #     规则：PRD 业务流程图必须引用权威来源（coupon-flow.html / 需求梳理图集）
+        #     且不得自行简化/重绘。检测：
+        #     a) 是否引用了权威来源文件名
+        #     b) 是否含多平台泳道关键词（若来源有泳道图但 PRD 无 → 疑似简化）
+        #     c) 是否含「禁止自行修改/禁止擅自改动」类约束声明
+        auth_sources = ['coupon-flow', '需求梳理图集', '业务流程图（横向',
+                         '泳道', '全链路', '时序图']
+        has_auth_ref = any(s in nearby_text for s in auth_sources)
+        swimlane_kw = ['平台端后台', '商家端后台', '券服务', '火山引擎',
+                       '用户端.*三端', '运营.*平台端']
+        has_swimlane = any(re.search(kw, html_text) for kw in swimlane_kw)
+        anti_tamper_kw = ['禁止.*自行.*修改', '禁止.*擅自.*改动', '禁止.*独立.*重绘',
+                          '不得.*自行.*简化', '须先.*修改.*梳理',
+                          '报差异.*确认', 'AI.*无权']
+        has_anti_tamper = any(re.search(kw, nearby_text) for kw in anti_tamper_kw)
+
+        if has_svg and not has_auth_ref:
+            warns.append(
+                "🔴 **业务流程图缺少权威来源引用**："
+                "检测到 <svg> 流程图，但未引用权威来源文件"
+                "（如 `coupon-flow.html` / `需求梳理图集` / 「横向泳道」）。"
+                "\n   规则：PRD §三 的业务流程图**必须基于已确认的权威流程图**"
+                "（需求梳理阶段产出的泳道图/时序图），不得自行简化或另画。"
+                "\n   修正：① 在流程图旁标注「本图引自 XX.html（权威来源）」；"
+                "② 若自行画了简化版 → **删除**，改为引用/内嵌权威源完整图。")
+        elif has_svg and not has_anti_tamper:
+            infos.append(
+                "💡 流程图未含「禁止自行修改」约束声明；"
+                "建议添加「⚠️ 禁止在 PRD 中自行简化/重绘/修改流程图，"
+                "差异须报用户确认」类规则声明，防止后续 AI 自行篡改。")
+
+        if has_svg and not has_swimlane and 'coupon-flow' in plain_text:
+            warns.append(
+                "🔴 **流程图疑似被简化**：引用了 coupon-flow.html（含多平台泳道+时序图），"
+                "但当前 PRD 流程图中未检测到泳道关键词"
+                "（平台端后台/商家端后台/券服务/火山引擎/用户端）。"
+                "\n   coupon-flow.html 包含：① 整体业务泳道图（6 泳道）+ "
+                "② 时序图 A（直播时长发券）+ ③ 时序图 B（商详领券→核销）。"
+                "\n   若 PRD 仅展示了简化版（如 6 阶段线性图），**必须回退为完整版**，"
+                "不得省略泳道/时序图。")
+
     return warns, infos
 
 
@@ -874,7 +916,42 @@ def scan_table_quality(html_text):
                 f"[{tlabel}] {len(long_text_cells)} 个 <td> 纯文本超长(>40字)"
                 f"（{long_text_cells[0]}），建议折行或精简文案。")
 
+        # 11) 🔴 多列表格（≥5列）缺 <colgroup> 显式列宽 + 全局 table-layout:fixed
+        #     → 必定导致列宽均分、内容挤到一列（v1.0.11 沉淀自评审）
+        if ref_cols >= 5:
+            table_html_segment = _extract_table_Nth(html_text, idx)
+            has_colgroup = bool(re.search(r'<colgroup[^>]*>.*?</colgroup>',
+                                          table_html_segment, re.DOTALL))
+            global_fixed = bool(re.search(r'table\s*\{[^}]*table-layout\s*:\s*fixed',
+                                          html_text))
+            if global_fixed and not has_colgroup:
+                struct_warns.append(
+                    f"[{tlabel}] 🔴 **多列挤压风险**：表格有 {ref_cols} 列，"
+                    f"全局 CSS 设了 `table-layout:fixed` 但本表无 `<colgroup>` "
+                    f"显式列宽→浏览器将均分列宽，首列长文本+单元格内<br>标签"
+                    f"会导致内容全部挤到一列！"
+                    f'\n   修复：① 本表加 `<colgroup><col style=\'width:X%\'>…</colgroup>` '
+                    f"给每列分配合理宽度；或 ② 本表内联覆盖为 `table-layout:auto`。")
+
     return struct_warns, style_warns, len(parser.tables)
+
+
+# ---- 辅助函数：提取第 N 个 <table> 的原始 HTML 片段 ----
+def _extract_table_Nth(full_html, table_index):
+    """从完整 HTML 中提取第 N 个（1-based）<table> 的原始片段。"""
+    count = 0
+    pos = 0
+    while True:
+        start = full_html.find('<table', pos)
+        if start == -1:
+            return ""
+        count += 1
+        if count == table_index:
+            end = full_html.find('</table>', start)
+            if end == -1:
+                return full_html[start:]
+            return full_html[start:end + 8]
+        pos = start + 1
 
 
 def main():
