@@ -729,21 +729,19 @@ def scan_pending_hygiene(plain_text, html_text=""):
 
 
 def scan_resolved_warn_boxes(html_text):
-    """扫描「已解决/设计如此」的冗余警告框（v1.0.12 沉淀自评审）。
+    """扫描冗余 meta 框（v1.0.12→v1.0.13 扩展）。
 
-    规则：PRD 中 <div class="warn"> 或类似 ⚠️ 警告框，
-    若其内容全部为「✅ 已解决」「设计如此」「已确认方案」等
-    已闭环项 → 该警告框是冗余噪声，应直接删除。
-    仅当框内含真正的「⚠️ 待确认」「待评审」「TODO」等未闭环项时才保留。
+    覆盖两类：
+      A) <div class="warn"> 警告框：内容全为「✅ 已解决/设计如此/已确认」等已闭环项
+      B) <div class="note"> 或其他 meta 说明框：含「📎 权威来源/禁止修改/AI无权/
+         报差异给用户确认」等面向 AI/评审过程的元说明——PRD 不应出现此类噪声
 
     返回 (warns, auto_fix_actions)。
-        warns: 检测到的冗余警告框描述列表
-        auto_fix_actions: 建议的自动修复操作（可直接执行删除）
     """
     warns = []
     auto_fixes = []
 
-    # 匹配 <div class="warn">...</div> 警告块
+    # ========== 类型 A：已闭环警告框 ==========
     warn_pattern = re.compile(
         r'<div\s+class="warn"[^>]*>(.*?)</div>',
         re.DOTALL | re.IGNORECASE
@@ -751,10 +749,8 @@ def scan_resolved_warn_boxes(html_text):
 
     for m in warn_pattern.finditer(html_text):
         content = m.group(1)
-        # 提取纯文本（去掉 HTML 标签）
         plain = re.sub(r'<[^>]+>', '', content).strip()
 
-        # 检测是否全是"已解决"类标记
         resolved_markers = [
             r'✅\s*已解决', r'已解决',
             r'设计如此', r'既定设计',
@@ -767,37 +763,75 @@ def scan_resolved_warn_boxes(html_text):
             r'⚠️.*待', r' pending ', r' TBD ',
         ]
 
-        # 统计 resolved 和 unresolved 标记数
         resolved_count = sum(1 for pat in resolved_markers
                             if re.search(pat, plain, re.IGNORECASE))
         unresolved_count = sum(1 for pat in unresolved_markers
                               if re.search(pat, plain, re.IGNORECASE))
 
-        # 如果有 resolved 标记但无 unresolved 标记 → 冗余警告框
         if resolved_count > 0 and unresolved_count == 0:
-            # 取标题/首行作为标识
             title_match = re.search(r'【[^】]+】|（[^）]+）|<b>([^<]+)</b>',
                                     content, re.IGNORECASE)
             title = title_match.group(1) or title_match.group(2) or \
                 title_match.group(3) or '无标题'
             title = title.strip()[:60]
-
-            # 统计条目数
             li_count = len(re.findall(r'<li[^>]*>', content))
 
             warns.append(
                 f"🔴 **冗余警告框**：「{title}」包含 {li_count} 条项，"
                 f"全部为「✅ 已解决 / 设计如此 / 已确认」等已闭环内容——"
                 f"该警告框是冗余噪声，应直接删除。"
-                f"\n   触发规则 §4.14 RESOLVED_WARN_BOX："
-                f"warn 框内无任何「待确认/待评审/TODO」未闭环标记。")
+                f"\n   触发规则 §4.14-A RESOLVED_WARN_BOX。")
             auto_fixes.append({
                 'type': 'delete_warn_div',
                 'title': title,
                 'match_start': m.start(),
                 'match_end': m.end(),
-                'reason': f'全部 {li_count} 项均已闭环（resolved={resolved_count}, unresolved=0）',
+                'reason': f'全部 {li_count} 项均已闭环',
             })
+
+    # ========== 类型 B：面向 AI/评审的 meta 说明框（v1.0.13 扩展） ==========
+    # 匹配 <div class="note"> 以及任何含 meta 关键词的说明块
+    meta_patterns = [
+        (r'<div\s+class="note"[^>]*>(.*?)</div>', 'div.note'),
+        (r'<div\s+[^>]*style="[^"]*background:#f0f5ff[^"]*"[^>]*>(.*?)</div>',
+         '蓝色背景说明框'),
+    ]
+
+    meta_keywords = [
+        r'📎\s*权威来源', r'权威来源',
+        r'禁止在 PRD 中自行', r'禁止.*重绘', r'禁止.*修改', r'禁止.*改动',
+        r'AI\s*无权', r'AI 无权',
+        r'报差异给用户确认', r'must报差异',
+        r'为需求梳理阶段确认', r'引用自.*梳理',
+        r'本图引自', r'本节.*引自',
+    ]
+
+    for pat_regex, label in meta_patterns:
+        for m in re.finditer(pat_regex, html_text, re.DOTALL | re.IGNORECASE):
+            content = m.group(1)
+            plain = re.sub(r'<[^>]+>', '', content).strip()
+
+            # 检测是否命中 meta 关键词
+            hit_keywords = [kw for kw in meta_keywords
+                           if re.search(kw, plain, re.IGNORECASE)]
+
+            if len(hit_keywords) >= 2:  # 至少命中 2 个 meta 关键词才判定（防误报）
+                # 取首行作为标识
+                first_line = plain.split('\n')[0].strip()[:60] if plain else '无标题'
+
+                warns.append(
+                    f"🔴 **冗余 Meta 说明框**（{label}）：「{first_line}…」"
+                    f"命中 {len(hit_keywords)} 个面向 AI/评审的 meta 关键词"
+                    f"（{', '.join([k.replace(r'\s*', ' ')[:15] for k in hit_keywords[:3]])}…）——"
+                    f"PRD 不应包含「来源说明/禁止修改声明/AI操作约束」等元信息。"
+                    f"\n   触发规则 §4.14-B META_NOTE：直接删除整个说明框。")
+                auto_fixes.append({
+                    'type': 'delete_meta_note',
+                    'title': first_line,
+                    'match_start': m.start(),
+                    'match_end': m.end(),
+                    'reason': f'meta 关键词命中={len(hit_keywords)}',
+                })
 
     return warns, auto_fixes
 
