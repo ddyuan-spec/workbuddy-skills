@@ -894,6 +894,100 @@ def scan_prototype_link_instead_of_image(html_text):
     return (warns,)
 
 
+def scan_prototype_image_valid(html_text, prd_path=None):
+    """扫描「原型示意」<img> 截图是否有效可显示（v1.0.16 沉淀自评审）。
+
+    规则 §4.16 PROTOTYPE_IMAGE_INVALID：
+    PRD §四 中「原型示意」不仅要是 <img> 标签（§4.15 已覆盖），
+    还必须满足以下条件才能通过：
+      ① src 引用的图片文件在本地磁盘存在（相对路径基于 PRD 文件所在目录）
+      ② <img> 标签含有 style 属性，且至少包含 max-width（响应式）和 border（可见边框）
+      ③ 含有 alt 属性（无障碍/语义化）
+
+    参数：
+      html_text: PRD HTML 全文
+      prd_path: PRD 文件绝对路径（用于解析 img src 相对路径），可为 None
+
+    返回 (warns, ) —— 单元组。
+    """
+    warns = []
+
+    # 定位所有「原型示意」段落中的 <img> 标签
+    proto_sections = re.finditer(
+        r'原型示意\s*[:：][^<]{0,100}?(<img\s[^>]*>)',
+        html_text, re.IGNORECASE
+    )
+
+    if not proto_sections:
+        # 没有「原型示意」+ img 组合 → 可能是用了链接（由 §4.15 报告）
+        return (warns,)
+
+    # 确定基准目录（用于解析 src 相对路径）
+    base_dir = ''
+    if prd_path:
+        base_dir = os.path.dirname(os.path.abspath(prd_path))
+
+    for m in proto_sections:
+        img_tag = m.group(1)
+        img_start = m.start(1)
+
+        # 提取 src
+        src_match = re.search(r'src=["\']([^"\']+)["\']', img_tag, re.IGNORECASE)
+        if not src_match:
+            warns.append(
+                f"🔴 **原型截图 <img> 缺少 src 属性**："
+                f"「原型示意」中的 `<img>` 标签未指定 src 路径。"
+                f"\n   触发规则 §4.16 PROTOTYPE_IMAGE_INVALID："
+                f"补全 src=\"路径/xxx.png\" 并确保文件存在。")
+            continue
+
+        src = src_match.group(1)
+
+        # 检查 ① 文件是否存在
+        if base_dir and not src.startswith(('http://', 'https://', 'data:')):
+            abs_src = os.path.join(base_dir, src)
+            abs_src = os.path.normpath(abs_src)
+            if not os.path.isfile(abs_src):
+                warns.append(
+                    f"🔴 **原型截图文件不存在**（src=\"{src}\"）："
+                    f"PRD 引用的图片文件在本地未找到（期望路径：{abs_src}）。"
+                    f"线上 GitHub Pages 同样会 404 → 截图显示为破损图标。"
+                    f"\n   触发规则 §4.16 PROTOTYPE_IMAGE_INVALID："
+                    f"确认截图文件已放入正确目录并已 git push 到仓库。")
+
+        # 检查 ② style 属性（max-width + border）
+        style_match = re.search(r'style=["\']([^"\']*)["\']', img_tag, re.IGNORECASE)
+        if not style_match:
+            warns.append(
+                f"🟡 **原型截图 <img> 缺少 style 属性**（src=\"{src}\"）："
+                f"建议添加 style=\"max-width:100%;border:1px solid #e0e0e0;border-radius:8px;\" "
+                f"确保截图响应式展示且有可见边框。"
+                f"\n   触发规则 §4.16 PROTOTYPE_IMAGE_INVALID（样式规范）。")
+        else:
+            style_val = style_match.group(1).lower()
+            missing = []
+            if 'max-width' not in style_val:
+                missing.append('max-width（响应式缩放）')
+            if 'border' not in style_val:
+                missing.append('border（可见边框）')
+            if missing:
+                warns.append(
+                    f"🟡 **原型截图 style 不完整**（src=\"{src}\"）："
+                    f"缺少 {', '.join(missing)}。"
+                    f"\n   当前 style=\"{style_match.group(1)}\""
+                    f"\n   建议补全为 style=\"max-width:100%;border:1px solid #e0e0e0;border-radius:8px;\"")
+
+        # 检查 ③ alt 属性
+        alt_match = re.search(r'alt=["\']([^"\']*)["\']', img_tag, re.IGNORECASE)
+        if not alt_match:
+            warns.append(
+                f"🟡 **原型截图 <img> 缺少 alt 属性**（src=\"{src}\"）："
+                f"建议添加 alt=\"xxx端原型\" 以满足无障碍/语义化要求。"
+                f"\n   触发规则 §4.16 PROTOTYPE_IMAGE_INVALID（语义规范）。")
+
+    return (warns,)
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -1238,6 +1332,7 @@ def main():
     ph_warns, ph_infos = scan_pending_hygiene(text, raw_html if raw_html else html_text)
     rw_warns, rw_fixes = scan_resolved_warn_boxes(raw_html if raw_html else html_text)
     pl_warns, = scan_prototype_link_instead_of_image(raw_html if raw_html else html_text)
+    pi_warns, = scan_prototype_image_valid(raw_html if raw_html else html_text, path)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1376,6 +1471,17 @@ def main():
         print()
     else:
         print("✅ 所有「原型示意」均已嵌入截图（非文字链接）。")
+
+    if pi_warns:
+        print(f"### 🖼️ 原型截图有效性检查（{len(pi_warns)} 处，§4.16 图片/样式/路径）")
+        for w in pi_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：确保截图文件存在本地+已推送到 GitHub、"
+              "<img> 含 style(max-width+border) + alt 属性。")
+        print()
+    else:
+        print("✅ 所有「原型示意」截图文件存在、样式规范、语义完整。")
 
     # ---------- 结论 ----------
     print()
