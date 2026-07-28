@@ -23,6 +23,7 @@ import sys
 import os
 import glob
 import re
+import json
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -1588,12 +1589,18 @@ def scan_modal_popup_missing_screenshot(html_text):
 
     # 弹窗关键词
     modal_keywords = ['弹窗', '弹框', 'Modal', 'Popup', '对话框', '抽屉', 'overlay', 'dialog']
+    # 排除关键词：标题含这些词时，即使带"弹窗"也是「引用/差异/入口」而非独立弹窗组件，
+    # 不应要求独立截图（避免 4.3.1 首页·获券弹窗入口、4.4.1 外壳差异 等误报）。
+    modal_exclude = ['差异', '对比', '规范', '外壳', 'diff', '入口', '示意', '总览', '引用', '说明']
 
     for m in h4_pattern.finditer(html_text):
         title_text = re.sub(r'<[^>]+>', '', m.group(1)).strip()
 
         # 只检查含弹窗关键词的功能点
         if not any(kw in title_text for kw in modal_keywords):
+            continue
+        # 排除「引用/差异/入口」类标题（非独立弹窗组件）
+        if any(ex in title_text for ex in modal_exclude):
             continue
 
         start_pos = m.end()
@@ -1721,6 +1728,10 @@ def scan_mixed_view_screenshot(html_text):
     """
     warns = []
 
+    # 排除：差异/规范/外壳/范围/对比类说明章节（非原型视图），以及流程图/时序图/泳道图（属图示非原型截图）
+    section_exclude = ['差异', '规范', '外壳', '范围', '对比', '说明', '示意', '总览',
+                       '引用', '流程图', '时序图', '泳道', '图 1', '图 2', '图 3', '图 4', '图 5']
+
     # 匹配 h4 功能点小节
     h4_pattern = re.compile(
         r'<h4[^>]*>(.+?)<span\s+class="tag[^"]*"[^>]*>(.+?)</span></h4>',
@@ -1736,6 +1747,9 @@ def scan_mixed_view_screenshot(html_text):
         # 只检查本期新增/改动的功能点
         if '新增' not in tag and '改动' not in tag:
             continue
+        # 排除差异/规范/流程图等非原型视图章节
+        if any(ex in title for ex in section_exclude):
+            continue
 
         # 获取该 h4 到下一个 h4/h3/h2 之间的内容
         start = m.end()
@@ -1748,36 +1762,28 @@ def scan_mixed_view_screenshot(html_text):
         imgs = img_pattern.findall(section_html)
         img_count = len(imgs)
 
-        # 检测方式 a): 标题含多视图分隔符
-        multi_indicators = ['+', '／', '/', '、', '＋']
+        # 检测方式：标题含多视图分隔符，且标题中明确命名了 ≥2 个独立页面标识（P\d / D\d）
+        # 视图数量估计：以标题中的页面标识（P2/D3 等）为准；无页面标识时退化为视图类型词计数。
+        multi_indicators = ['+', '／', '/', '、', '＋', '＆', '&']
         is_multi_title = any(ind in title for ind in multi_indicators)
+        page_ids = re.findall(r'\b[PD]\d+\b', title)
+        view_words = [w for w in ['列表', '详情', '新建', '编辑', '弹窗', '页面'] if w in title]
+        # 「新建/编辑」是同一表单（创建即编辑），不算多视图
+        if set(view_words) == {'新建', '编辑'}:
+            view_words = []
+        if page_ids:
+            distinct_view_count = len(set(page_ids))
+        else:
+            distinct_view_count = len(view_words)
 
-        # 检测方式 b): 节内多个 <p><b>子视图名</b> 子标题
-        subview_titles = re.findall(r'<p><b>([^<]+)</b></p>', section_html)
-        # 过滤掉非视图类标题（如表单字段表、按钮说明等）
-        view_keywords = ['列表', '详情', '新建', '编辑', '弹窗', '表单', '页面',
-                         '原型', '截图', '效果', '示意', 'P\\d', 'D\\d']
-        view_subviews = [sv for sv in subview_titles
-                         if any(re.search(vk, sv) for vk in view_keywords)]
-        subview_count = len(view_subviews)
-
-        # 判定：多视图标题但只有 1 张图 OR 多个子视图标题但图片数不足
-        if is_multi_title and img_count < 2:
+        # 判定：标题明确多视图（≥2 个独立页面）但截图数量不足 → 🔴
+        if is_multi_title and distinct_view_count >= 2 and img_count < distinct_view_count:
             warns.append(
                 f"🔴 **多视图混在一张截图**（h4: 「{title}」）："
-                f"\n   标题暗示包含多个页面/视图（含 '+' 或 '／' 等分隔符），"
+                f"\n   标题明确包含 {distinct_view_count} 个独立页面/视图（如 P2+D3、列表+详情），"
                 f"但该节仅有 {img_count} 张 <img>。"
                 f"\n   要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图。"
                 f"\n   当前图片：{', '.join(imgs) if imgs else '无'}"
-                f"\n   触发规则 §4.26 MIXED_VIEW_SCREENSHOT")
-        elif subview_count >= 2 and img_count < subview_count:
-            missing_views = view_subviews[img_count:] if img_count > 0 else view_subviews
-            warns.append(
-                f"🔴 **部分视图缺少独立截图**（h4: 「{title}」）："
-                f"\n   节内识别到 {subview_count} 个子视图（{', '.join(view_subviews)}），"
-                f"但仅有 {img_count} 张 <img>。"
-                f"\n   缺少截图的视图：{', '.join(missing_views)}"
-                f"\n   要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图。"
                 f"\n   触发规则 §4.26 MIXED_VIEW_SCREENSHOT")
 
     return (warns,)
@@ -2231,9 +2237,229 @@ def _extract_table_Nth(full_html, table_index):
         pos = start + 1
 
 
+def detect_edge_exe():
+    """定位 Edge 可执行文件（headless 截图用）。"""
+    candidates = [
+        r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    import shutil
+    return shutil.which('msedge') or ''
+
+
+def force_view(html, view_id, kind):
+    """在原型 HTML 中强制显示指定视图（移除 hidden / 置为 active），返回新 HTML。"""
+    if kind == 'app':
+        # App 原型：<section class="page active" id="p_x"> —— 先把所有 active 复位，再激活目标
+        html = re.sub(r'class="page active"', 'class="page"', html)
+        html = re.sub(r'(<section class="page" id="%s")' % re.escape(view_id),
+                      r'\1 class="active"', html)
+    elif kind == 'modal':
+        # 弹窗：去除 display:none，加 show 类
+        html = re.sub(r'id="%s" style="display:none"' % re.escape(view_id),
+                      r'id="%s" class="show"' % re.escape(view_id), html)
+        html = re.sub(r'id="%s" class="hidden"' % re.escape(view_id),
+                      r'id="%s" class="show"' % re.escape(view_id), html)
+    else:
+        # 平台端/商家端后台原型：<div id="viewX" class="hidden"> —— 先全量隐藏，再显示目标
+        html = re.sub(r'(<div id="view[A-Za-z0-9]+")(\s+class="[^"]*")?',
+                      lambda m: m.group(1) + ' class="hidden"', html)
+        html = re.sub(r'<div id="%s" class="hidden">' % re.escape(view_id),
+                      r'<div id="%s">' % re.escape(view_id), html)
+    return html
+
+
+def capture_view_screenshot(proto_path, view_id, dst_path, kind, edge_exe=None, trigger=None):
+    """从原型 HTML 截取指定视图为 1440×900 PNG。成功返回 True。
+    trigger：可选 JS 片段（如 'setTimeout(showArrival,200);'），注入快照 </body> 前触发弹窗内容渲染。"""
+    if not edge_exe:
+        edge_exe = detect_edge_exe()
+    if not edge_exe or not os.path.exists(edge_exe):
+        return False
+    try:
+        with open(proto_path, encoding='utf-8', errors='ignore') as f:
+            html = f.read()
+        html = force_view(html, view_id, kind)
+        if trigger:
+            html = html.replace('</body>', '<script>%s</script></body>' % trigger)
+        snap = proto_path + '.snap_tmp.html'
+        with open(snap, 'w', encoding='utf-8') as f:
+            f.write(html)
+        import subprocess
+        result = subprocess.run(
+            [edge_exe, '--headless=new', '--disable-gpu',
+             '--screenshot=' + dst_path, '--window-size=1440,900',
+             'file:///' + snap.replace('\\', '/')],
+            capture_output=True, text=True, timeout=30)
+        os.remove(snap)
+        return os.path.exists(dst_path) and os.path.getsize(dst_path) > 0
+    except Exception:
+        return False
+
+
+def detect_prototype_kind(proto_path):
+    """判断原型类型：app / platform / modal（按 DOM 特征）。"""
+    try:
+        with open(proto_path, encoding='utf-8', errors='ignore') as f:
+            head = f.read(20000)
+    except Exception:
+        return 'platform'
+    if 'class="page active"' in head or 'class="page"' in head:
+        return 'app'
+    return 'platform'
+
+
+def find_missing_screenshot_sections(html_text):
+    """返回缺原型截图的功能点小节列表（合并 §4.25 + §4.29 判定，供 --auto-fill 使用）。
+    每项：{title, start, end, reason}。
+
+    判定（与 §4.25 报告逻辑保持一致，避免误把"被父级总览图覆盖"的子功能当缺失）：
+    - 后台端（平台端/商家端）功能点：无 own <img> → 缺失（必须补）
+    - 标题含独立页面关键词（详情/新建/编辑/列表/看板/查询/管理）：无 own <img> → 缺失
+    - 弹窗/Modal 类（已排除 差异/规范/外壳/入口 等非组件）：无 own <img> → 缺失
+    - 其余客户端子功能：若所在 h3 顶部已有父级总览图 → 视为已覆盖（跳过）；
+      否则仍判缺失（避免"很多图缺失"）。
+    """
+    missing = []
+    modal_keywords = ['弹窗', '弹框', 'Modal', 'Popup', '对话框', '抽屉', 'overlay', 'dialog']
+    modal_exclude = ['差异', '对比', '规范', '外壳', 'diff', '入口', '示意', '总览', '引用', '说明']
+    distinct_keywords = ['详情', '新建', '编辑', '列表', '看板', '数据看板', '查询', '管理']
+    h4_positions = [m.start() for m in re.finditer(r'<h4', html_text)]
+    h3_positions = [m.start() for m in re.finditer(r'<h3[^>]*>', html_text)]
+
+    # h3 后 500 字符内是否有父级总览图
+    h3_has_img = {}
+    for h3_pos in h3_positions:
+        h3_has_img[h3_pos] = bool(re.search(r'<img\s', html_text[h3_pos:h3_pos + 500]))
+
+    for m in re.finditer(r'<h4[^>]*>(.+?)</h4>', html_text, re.DOTALL):
+        full = m.group(0)
+        title_text = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+        tag_text = ''
+        tm = re.search(r'class="tag[^"]*y[^"]*">([^<]+)</span>', full)
+        if tm:
+            tag_text = tm.group(1).strip()
+
+        is_new = ('本期新增' in tag_text or '本期改动' in tag_text)
+        is_modal = any(kw in title_text for kw in modal_keywords) and \
+                   not any(ex in title_text for ex in modal_exclude)
+
+        if not (is_new or is_modal):
+            continue
+
+        start_pos = m.end()
+        h4_idx = next((i for i, p in enumerate(h4_positions) if p == m.start()), -1)
+        end_pos = html_text.find('<h4', start_pos) if h4_idx >= 0 and h4_idx + 1 < len(h4_positions) else len(html_text)
+        section_html = html_text[start_pos:end_pos]
+
+        if re.search(r'<img\s', section_html):
+            continue  # 已有截图，跳过
+
+        # 找最近的 h3（判定后台端 + 父级图）
+        prev_h3 = None
+        for h3_pos in h3_positions:
+            if h3_pos < m.start():
+                prev_h3 = h3_pos
+            else:
+                break
+        is_backend = False
+        has_parent_img = False
+        if prev_h3 is not None:
+            h3_end = html_text.find('</h3>', prev_h3)
+            h3_text = html_text[prev_h3:h3_end] if h3_end > prev_h3 else ''
+            is_backend = bool(re.search(r'平台端后台|商家端后台', h3_text))
+            has_parent_img = h3_has_img.get(prev_h3, False)
+
+        has_distinct = any(kw in title_text for kw in distinct_keywords)
+
+        # 跳过条件：非后台 + 被父级总览图覆盖 + 非独立页面 + 非弹窗
+        if (not is_backend) and has_parent_img and (not has_distinct) and (not is_modal):
+            continue  # 视为已覆盖（如首页入口卡被首页总览图覆盖）
+
+        reason = '§4.25 本期新增/改动缺图' if is_new else '§4.29 弹窗缺独立截图'
+        missing.append({'title': title_text, 'start': start_pos, 'end': end_pos, 'reason': reason})
+    return missing
+
+
+def auto_fill_prototype_screenshots(prd_path):
+    """检出缺图 → 直接生成并插入截图（不询问）。返回 (filled, failed, skipped)。
+
+    依赖 PRD 同目录的 prototype_screenshot_map.json：
+    {
+      "<h4标题(去tag)>": [
+        {"proto": "平台端后台原型.html", "view": "viewX",
+         "out": "coupon-prd-assets/xxx.png", "label": "说明", "kind": "platform|app|modal(可选)"}
+      ]
+    }
+    已有 <img> 的小节或 mapping 未覆盖的小节会被跳过（skipped 报告人工处理）。
+    """
+    prd_dir = os.path.dirname(os.path.abspath(prd_path))
+    map_path = os.path.join(prd_dir, 'prototype_screenshot_map.json')
+    if not os.path.exists(map_path):
+        return [], [], [('NO_MAP', '未找到 prototype_screenshot_map.json，无法自动补图')]
+
+    with open(map_path, encoding='utf-8') as f:
+        mapping = json.load(f)
+
+    with open(prd_path, encoding='utf-8', errors='ignore') as f:
+        html = f.read()
+
+    missing = find_missing_screenshot_sections(html)
+    filled, failed, skipped = [], [], []
+
+    # 建立标题→插入位置的映射（在 html 中按 start 定位）
+    for item in missing:
+        title = item['title']
+        # 匹配 mapping 键：精确 → 包含
+        matched_keys = [k for k in mapping if k == title]
+        if not matched_keys:
+            matched_keys = [k for k in mapping if k in title or title in k]
+        if not matched_keys:
+            skipped.append((title, 'mapping 未覆盖，需人工补图'))
+            continue
+        key = matched_keys[0]
+        specs = mapping[key]
+        gen_imgs = []
+        ok = True
+        for spec in specs:
+            proto = os.path.join(prd_dir, spec['proto'])
+            if not os.path.exists(proto):
+                failed.append((title, f"原型文件不存在：{spec['proto']}"))
+                ok = False
+                continue
+            kind = spec.get('kind') or detect_prototype_kind(proto)
+            out_rel = spec['out']
+            dst = os.path.join(prd_dir, out_rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if capture_view_screenshot(proto, spec['view'], dst, kind, trigger=spec.get('trigger')):
+                gen_imgs.append((out_rel, spec.get('label', title)))
+            else:
+                failed.append((title, f"截图失败：{spec['proto']}#{spec['view']}"))
+                ok = False
+        if ok and gen_imgs:
+            # 插入 <img> 到该小节开头（</h4> 之后）
+            imgs_html = ''.join(
+                f'<p><img src="{rel}" style="max-width:100%;max-height:800px;'
+                f'border:1px solid #e0e0e0;border-radius:8px;object-fit:contain;" '
+                f'alt="{lbl}"></p>' for rel, lbl in gen_imgs)
+            insert_at = html.find('</h4>', item['start'] - 50) + len('</h4>')
+            html = html[:insert_at] + '\n' + imgs_html + '\n' + html[insert_at:]
+            filled.append((title, [g[0] for g in gen_imgs]))
+
+    if filled:
+        with open(prd_path, 'w', encoding='utf-8') as f:
+            f.write(html)
+
+    return filled, failed, skipped
+
+
 def main():
+    auto_fill = '--auto-fill' in sys.argv
     if len(sys.argv) < 2:
-        print("用法：python check_prd.py <prd文件>")
+        print("用法：python check_prd.py <prd文件> [--auto-fill]")
         sys.exit(2)
     path = sys.argv[1]
     if not os.path.exists(path):
@@ -2639,6 +2865,31 @@ def main():
         print("处理要求：删除所有绿色 ✅ 验证备注/方案确认/截图验证等开发调试笔记。"
               "如为必要业务规则说明，改写为正式表述（去掉 ✅ 前缀和括号备注格式）。")
         print()
+
+    # ---------- 自动补图（--auto-fill）----------
+    if auto_fill:
+        print()
+        print("## 🤖 自动补图（--auto-fill）")
+        print()
+        filled, failed, skipped = auto_fill_prototype_screenshots(path)
+        if filled:
+            print(f"✅ 已自动补图 {len(filled)} 处：")
+            for t, imgs in filled:
+                print(f"- {t} → {', '.join(imgs)}")
+            print()
+        if failed:
+            print(f"⚠️ 补图失败 {len(failed)} 处（需排查原型/视图）：")
+            for t, msg in failed:
+                print(f"- {t}：{msg}")
+            print()
+        if skipped:
+            print(f"ℹ️ 跳过 {len(skipped)} 处（mapping 未覆盖，需人工补图）：")
+            for t, msg in skipped:
+                print(f"- {t}：{msg}")
+            print()
+        if not (filled or failed or skipped):
+            print("✅ 无缺图，无需补图。")
+            print()
 
     # ---------- 结论 ----------
     print()
