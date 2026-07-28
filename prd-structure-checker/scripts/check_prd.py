@@ -728,6 +728,80 @@ def scan_pending_hygiene(plain_text, html_text=""):
     return warns, infos
 
 
+def scan_resolved_warn_boxes(html_text):
+    """扫描「已解决/设计如此」的冗余警告框（v1.0.12 沉淀自评审）。
+
+    规则：PRD 中 <div class="warn"> 或类似 ⚠️ 警告框，
+    若其内容全部为「✅ 已解决」「设计如此」「已确认方案」等
+    已闭环项 → 该警告框是冗余噪声，应直接删除。
+    仅当框内含真正的「⚠️ 待确认」「待评审」「TODO」等未闭环项时才保留。
+
+    返回 (warns, auto_fix_actions)。
+        warns: 检测到的冗余警告框描述列表
+        auto_fix_actions: 建议的自动修复操作（可直接执行删除）
+    """
+    warns = []
+    auto_fixes = []
+
+    # 匹配 <div class="warn">...</div> 警告块
+    warn_pattern = re.compile(
+        r'<div\s+class="warn"[^>]*>(.*?)</div>',
+        re.DOTALL | re.IGNORECASE
+    )
+
+    for m in warn_pattern.finditer(html_text):
+        content = m.group(1)
+        # 提取纯文本（去掉 HTML 标签）
+        plain = re.sub(r'<[^>]+>', '', content).strip()
+
+        # 检测是否全是"已解决"类标记
+        resolved_markers = [
+            r'✅\s*已解决', r'已解决',
+            r'设计如此', r'既定设计',
+            r'已确认方案', r'已确认',
+            r'非待确认', r'不构成待确认',
+        ]
+        unresolved_markers = [
+            r'待确认', r'待评审', r'TODO', r'待定',
+            r'待补充', r'待讨论', r'需确认',
+            r'⚠️.*待', r' pending ', r' TBD ',
+        ]
+
+        # 统计 resolved 和 unresolved 标记数
+        resolved_count = sum(1 for pat in resolved_markers
+                            if re.search(pat, plain, re.IGNORECASE))
+        unresolved_count = sum(1 for pat in unresolved_markers
+                              if re.search(pat, plain, re.IGNORECASE))
+
+        # 如果有 resolved 标记但无 unresolved 标记 → 冗余警告框
+        if resolved_count > 0 and unresolved_count == 0:
+            # 取标题/首行作为标识
+            title_match = re.search(r'【[^】]+】|（[^）]+）|<b>([^<]+)</b>',
+                                    content, re.IGNORECASE)
+            title = title_match.group(1) or title_match.group(2) or \
+                title_match.group(3) or '无标题'
+            title = title.strip()[:60]
+
+            # 统计条目数
+            li_count = len(re.findall(r'<li[^>]*>', content))
+
+            warns.append(
+                f"🔴 **冗余警告框**：「{title}」包含 {li_count} 条项，"
+                f"全部为「✅ 已解决 / 设计如此 / 已确认」等已闭环内容——"
+                f"该警告框是冗余噪声，应直接删除。"
+                f"\n   触发规则 §4.14 RESOLVED_WARN_BOX："
+                f"warn 框内无任何「待确认/待评审/TODO」未闭环标记。")
+            auto_fixes.append({
+                'type': 'delete_warn_div',
+                'title': title,
+                'match_start': m.start(),
+                'match_end': m.end(),
+                'reason': f'全部 {li_count} 项均已闭环（resolved={resolved_count}, unresolved=0）',
+            })
+
+    return warns, auto_fixes
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -1053,6 +1127,7 @@ def main():
     sm_warns, sm_infos = scan_state_machine(text, raw_html if raw_html else html_text)
     st_warns, st_infos = scan_scope_tagging(text)
     ph_warns, ph_infos = scan_pending_hygiene(text, raw_html if raw_html else html_text)
+    rw_warns, rw_fixes = scan_resolved_warn_boxes(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1169,6 +1244,17 @@ def main():
         print()
     else:
         print("✅ 待确认项无与现有功能/设计决策冲突，状态机无前后矛盾。")
+
+    if rw_warns:
+        print(f"### 🗑️ 冗余警告框（{len(rw_warns)} 处，应直接删除）")
+        for w in rw_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：以上 warn 框内容全部为「已解决/设计如此/已确认」"
+              "等已闭环项 → 直接删除整个 <div class=\"warn\"> 块，无需保留。")
+        print()
+    else:
+        print("✅ 无冗余警告框（所有 ⚠️ 框均含未闭环待确认项或合法说明）。")
 
     # ---------- 结论 ----------
     print()
