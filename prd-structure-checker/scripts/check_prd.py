@@ -1633,6 +1633,74 @@ def scan_mixed_view_screenshot(html_text):
     return (warns,)
 
 
+def scan_verbose_table_annotations(html_text):
+    """扫描表格/状态流转表中的冗余验证备注（v1.0.27 沉淀自评审）。
+
+    规则 §4.27 VERBOSE_TABLE_ANNOTATIONS：
+    - PRD 表格（尤其是状态流转表）中不应出现开发/设计阶段的调试备注
+    - 典型冗余模式（绿色小字 ✅ 备注）：
+      a) `✅ 原型已有（截图验证：xxx）` — 截图验证备注
+      b) `✅ 方案确认：xxx` — 方案确认备注
+      c) `✅ 原型已验证（截图确认：xxx）` — 验证备注
+      d) `✅ 同上` — 懒惰引用
+    - 这些是写 PRD 时的自我验证笔记，不是给读者看的正式内容
+    - HTML 特征：`<span style="color:#2ba245;font-size:11px">✅ ...</span>`
+
+    典型反面案例：优惠券 PRD V1.0.26 的「优惠券配置状态转换表」原型按钮位置列，
+    5 行均带绿色 ✅ 冗余备注（如「截图验证：进行中行显示红色'下架'」）。
+    V1.0.27 全部清除。
+    """
+    warns = []
+
+    # 匹配绿色小字 ✅ 备注模式
+    pattern = re.compile(
+        r'<span\s+style="color:#2ba245;font-size:11px">\s*✅\s*([^<]+)</span>',
+        re.IGNORECASE)
+
+    for m in pattern.finditer(html_text):
+        annotation = m.group(1).strip()
+        # 获取所在行上下文（前后 80 字符）
+        start = max(0, m.start() - 80)
+        end = min(len(html_text), m.end() + 40)
+        context = html_text[start:end].replace('\n', ' ').strip()
+
+        warns.append(
+            f"🔴 **表格中存在冗余验证备注**："
+            f"\n   内容：「{annotation}」"
+            f"\n   上下文：...{context}..."
+            f"\n   这是开发/设计阶段的调试笔记，不属于 PRD 正式内容，应直接删除。"
+            f"\n   触发规则 §4.27 VERBOSE_TABLE_ANNOTATIONS")
+
+    # 也检测其他常见冗余模式（不限于绿色 span）
+    # 如表格单元格内的「（复数验证：...）」「（方案确认：...）」等括号备注
+    verbose_patterns = [
+        (r'（复数验证[^）]*）', '「复数验证」备注'),
+        (r'（截图验证[^）]*）', '「截图验证」备注'),
+        (r'（方案确认[^）]*）', '「方案确认」备注'),
+        (r'（已验证[^）]*）', '「已验证」备注'),
+        (r'\(复数验证[^)]*\)', '「复数验证」备注(半角)'),
+        (r'\(截图验证[^)]*\)', '「截图验证」备注(半角)'),
+    ]
+
+    for pat, label in verbose_patterns:
+        for m in re.finditer(pat, html_text):
+            # 排除已在上面绿色 span 中报告的
+            ann_text = m.group(0)
+            # 检查是否在 <td> 或 <th> 内（表格中）
+            pos = m.start()
+            preceding = html_text[max(0, pos - 200):pos]
+            if '<td' not in preceding and '<th' not in preceding:
+                continue  # 不在表格内，跳过
+
+            warns.append(
+                f"🟡 **表格中可能存在冗余备注**（{label}）："
+                f"\n   内容：{ann_text}"
+                f"\n   如确认为开发调试笔记应删除；如为业务规则说明可保留但建议改写为正式表述。"
+                f"\n   触发规则 §4.27 VERBOSE_TABLE_ANNOTATIONS")
+
+    return (warns,)
+
+
 def scan_lazy_function_detail(html_text):
     """扫描 §四 功能需求详情中「本期新增 / 本期改动」功能点是否偷懒（未按模板逐页面逐功能点拆解）。
 
@@ -2127,6 +2195,7 @@ def main():
     rmtm_warns, = scan_requirement_md_tag_mismatch(raw_html if raw_html else html_text, path)
     mpf_warns, = scan_missing_prototype_for_new_features(raw_html if raw_html else html_text)
     mvs_warns, = scan_mixed_view_screenshot(raw_html if raw_html else html_text)
+    vta_warns, = scan_verbose_table_annotations(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -2387,6 +2456,15 @@ def main():
             print()
         print("处理要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图，"
               "以独立的 <img> 标签插入，禁止多视图混在一张图里。")
+        print()
+
+    if vta_warns:
+        print(f"### 📝 表格冗余验证备注（{len(vta_warns)} 处，§4.27 冗余备注）")
+        for w in vta_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：删除所有绿色 ✅ 验证备注/方案确认/截图验证等开发调试笔记。"
+              "如为必要业务规则说明，改写为正式表述（去掉 ✅ 前缀和括号备注格式）。")
         print()
 
     # ---------- 结论 ----------
