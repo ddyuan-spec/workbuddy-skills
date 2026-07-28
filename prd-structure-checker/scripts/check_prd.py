@@ -348,9 +348,136 @@ def scan_flow_diagram_consistency(html_text, plain_text):
 
 
 # ---------------------------------------------------------------------------
-# 阶段4 扩展：表格质量扫描
-# 沉淀自 PRD 评审常见表格异常：结构错误、渲染塌陷、排版不一致
+# 阶段4 扩展：状态机完整性扫描
+# 沉淀自评审踩坑：状态机表缺前置条件、原型缺操作按钮、破坏性操作无守卫
 # ---------------------------------------------------------------------------
+def scan_state_machine(plain_text, html_text):
+    """检测 PRD 状态机与状态流转表的完整性。
+
+    检测项：
+      🔴 必须修：
+        1) 状态转换表中「任意→删除」「任意→下架」等宽泛起始状态
+           → 缺少状态守卫（如必须先下架才能删除）
+        2) 破坏性操作（删除/作废/回滚）的前置条件为空或仅写
+           「确认弹窗」→ 缺业务前置条件（如无已发放券/无关联活动）
+        3) 状态转换出现循环或同态转换（如 启用→下架 目标=下架）
+        4) 原型中列表操作列缺少状态变更按钮（如只有查看+删除，
+           缺下架/启用/编辑）
+      🟡 建议修：
+        5) 状态枚举未完整列出（仅有转换表，无「完整状态集」定义）
+        6) 子实体（发券活动/领券活动/用户券）的状态机仅为文字描述
+           无表格
+
+    返回 (warns, info_list)。
+    """
+    import re
+    warns = []
+    infos = []
+
+    # 检测是否有状态机相关内容
+    has_state = bool(re.search(r'状态[机流转]|状态流[转]|状态机', plain_text))
+    if not has_state:
+        return [], []
+
+    # ---- 1) 宽泛起始状态检测（任意→破坏性操作）----
+    loose_start = re.findall(
+        r'[^>](任意|所有|全部|无论.*状态)[^<]*\s*(删除|作废|回滚|下架)',
+        plain_text)
+    if loose_start:
+        for start, action in loose_start:
+            warns.append(
+                f"🔴 状态转换表存在宽泛起始状态「{start}→{action}」："
+                f"缺少状态守卫。通常「{action}」操作应限制在特定状态下执行"
+                f"（如仅「下架」状态可「删除」，或「启用」状态须先「下架」）。"
+                f"请补充每个状态的合法转换路径。")
+
+    # ---- 2) 破坏性操作前置条件检测 ----
+    destructive_ops = ['删除', '作废', '回滚', '强制结束']
+    weak_preconditions = ['确认弹窗', '用户确认', '弹窗确认', '二次确认',
+                          '运营操作', '管理员操作', '手动']
+    # 找状态转换表中的行模式：触发动作 + 前置条件 + 目标
+    for op in destructive_ops:
+        # 查找含该操作的行
+        rows = re.finditer(
+            rf'(?:^|\n)\s*\|[^\|]*{op}[^\|]*\|[^\|]*\|[^\|]*\|',
+            plain_text, re.MULTILINE)
+        for row in rows:
+            cell_text = row.group(0)
+            # 检查前置条件列是否过弱
+            is_weak = any(wp in cell_text for wp in weak_preconditions)
+            # 同时检查是否没有有意义的业务前置
+            has_business_guard = any(
+                kw in cell_text for kw in [
+                    '无已发放', '无关联', '已下架', '未开始',
+                    '零发放', '零领取', '无进行中', '先下架',
+                    '仅.*可删除', '仅.*可.*'])
+            if is_weak and not has_business_guard:
+                warns.append(
+                    f"🔴 破坏性操作「{op}」的前置条件过弱"
+                    f"（当前仅写确认类/运营操作类）："
+                    f"需补充**业务前置条件**（如「必须先下架」"
+                    f"「无已发放券」「无关联进行中活动」），"
+                    f"防止误操作导致数据不一致。")
+
+    # ---- 3) 循环/同态转换检测 ----
+    circular = re.findall(
+        r'\|(\w+[^\|]*)\|\s*(\w+)\s*\|\s*[^\|]*\s*\|\s*\1\s*\|',
+        plain_text)
+    if circular:
+        for src, action in circular:
+            if src != '任意':  # "任意"不算循环
+                warns.append(
+                    f"🔴 状态转换疑似循环/同态转换：「{src} → {action} → {src}」。"
+                    f"若非有意设计（如刷新重试），请检查是否起始/目标状态写反。")
+
+    # ---- 4) 原型操作列按钮检测（对 HTML 原型文件） ----
+    if html_text:
+        # 提取列表操作列中的按钮文字
+        act_buttons = re.findall(
+            r'class="(?:btn-link|act-btn)"[^>]*>([^<]+)</a>',
+            html_text)
+        # 常见状态变更操作关键词
+        state_actions = ['下架', '启用', '停用', '编辑', '发布', '撤回', '作废']
+        found_state_btns = [b for b in act_buttons if any(s in b for s in state_actions)]
+        has_delete = any('删除' in b or 'del' in b.lower() for b in act_buttons)
+
+        # 如果有删除按钮但无下架/启用按钮 → 可能缺失中间状态操作
+        if has_delete and not found_state_btns:
+            warns.append(
+                "🔴 **原型操作列缺状态变更按钮**："
+                "检测到列表操作列含「删除」按钮但不含「下架/启用/编辑」等"
+                "状态变更按钮。结合状态机规则（如须先下架再删除），"
+                "原型可能缺少关键操作入口。请核对原型与状态机是否一一对应。")
+        elif not act_buttons:
+            infos.append(
+                "原型列表未检测到操作列按钮（可能为纯展示页或截图原型）；"
+                "请人工确认操作按钮是否完整。")
+
+    # ---- 5) 状态枚举完整性 ----
+    has_enum_def = bool(re.search(
+        r'(完整状态集|状态枚举|状态定义|所有状态[:：])', plain_text))
+    has_table = bool(re.search(r'起始状态.*触发动作.*前置条件.*目标状态', plain_text))
+    if has_table and not has_enum_def:
+        infos.append(
+            "状态转换表存在但未明确定义「完整状态枚举」；"
+            "建议在表前列出所有状态值（如：草稿/启用/下架/已删除/已过期），"
+            "避免遗漏边界状态。")
+
+    # ---- 6) 子实体状态机格式 ----
+    sub_entities = ['发券活动状态', '领券活动状态', '用户券状态', '订单状态']
+    for entity in sub_entities:
+        m = re.search(rf'{entity}[:：]([^\n]+)', plain_text)
+        if m:
+            desc = m.group(1).strip()
+            # 仅文字描述（含箭头和中文）但无表格
+            has_arrows = '→' in desc or '->' in desc
+            if has_arrows and len(desc) < 80:
+                infos.append(
+                    f"「{entity}」仅为简短文字描述（<80字），"
+                    f"建议扩展为状态转换表格（起始/触发/前置/目标），"
+                    f"与主实体状态机保持一致颗粒度。")
+
+    return warns, infos
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -596,6 +723,7 @@ def main():
     tq_struct, tq_style, tq_cnt = scan_table_quality(raw_html) if raw_html else ([], [], 0)
     rd_hits = scan_redundant_declarations(text)
     fd_warns, fd_infos = scan_flow_diagram_consistency(raw_html if raw_html else html_text, text)
+    sm_warns, sm_infos = scan_state_machine(text, raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -671,6 +799,19 @@ def main():
     else:
         pass  # 无流程图相关内容，静默跳过
 
+    # 状态机完整性扫描
+    if sm_warns or sm_infos:
+        print(f"### ⚙️ 状态机完整性（{len(sm_warns)} 告警 / {len(sm_infos)} 提示）")
+        for w in sm_warns:
+            print(f"- {w}")
+            print()
+        for i in sm_infos:
+            print(f"- 💡 {i}")
+        if not sm_warns:
+            print()
+    else:
+        pass  # 无状态机内容，静默跳过
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -699,11 +840,12 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
-    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns)
+    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns) + len(sm_warns)
     if red_total:
         print(f"⚠️ **阶段4 发现 {red_total} 处风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)}"
               f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}"
-              f" / 冗余声明 {len(rd_hits)} / 流程图一致性 {len(fd_warns)}）："
+              f" / 冗余声明 {len(rd_hits)} / 流程图一致性 {len(fd_warns)}"
+              f" / 状态机完整性 {len(sm_warns)}）："
               "须逐项确认或修正后再定稿。")
     print()
 
