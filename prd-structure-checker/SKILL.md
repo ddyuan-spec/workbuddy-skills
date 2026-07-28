@@ -678,6 +678,39 @@ msedge --headless --screenshot=d3-form.png --window-size=1440,900 d3-form-view.h
 
 **踩坑**：优惠券 PRD V1.0.30 转 Word 前，arrival-modal 与 my-coupons 两张图 md5 与首页图一致（均为 `d0aeebb8…`），重截后 md5 变为 `39e0a0a7…` / `73f1542d…`，Word 才嵌入完整 14 张。
 
+### §4.31 SCREENSHOT_VIEW_MISMATCH — 截图内容必须匹配功能点视图（v1.0.32）
+
+**问题**：优惠券 PRD 4.3.4「商品详情领券」有 `<img>` 截图、路径正确、md5 也唯一（通过 §4.30 去重检测），但截图实际显示的是 **App 首页菜单导航视图**（M1~M5 列表），不是商品详情页（p_c5）。用户评审时一眼看出「这是首页不是商品详情」。根因是 Edge headless 截图时原型视图未切换到位——注入的 `go('p_c5')` 因时序问题未执行，或根本没注入切换脚本，截到了默认首页。
+
+**与 §4.30 的区别**：
+- §4.30 查「多张图内容是否重复」（md5 相同 → 去重丢图）
+- §4.31 查「单张图内容是否对」（md5 唯一但显示的是错误视图 → 即使不丢图也是错的）
+- §4.30 能抓出「截了两次首页」；§4.31 能抓出「只截了一次首页但贴在了商品详情下面」
+
+**规则**：
+
+| 检查项 | 判定逻辑 | 严重度 |
+|--------|---------|--------|
+| 截图为原型默认/首页视图 | 有 `prototype_screenshot_map.json` 时：map 指定了 `view`（如 `p_c5`），但截图 md5 == 该原型的「首页基准 md5」→ 视图未切换 | 🔴 |
+| 文件名与视图语义矛盾 | 文件名含 `detail/product/商品详情` 等关键词，但同原型其他截图（如 coupon-app.png 首页）视觉特征高度相似（文件大小偏差 <5% 且宽高相同） | 🟡 |
+| auto-fill 后校验 | `--auto-fill` 截取后立即比对首页基准 md5，命中则自动重试（加大 setTimeout 延迟到 1500ms 并二次截图） | 🔴（auto-fix） |
+
+**检测实现**（`check_prd.py` 新增 `scan_screenshot_view_mismatch()`）：
+
+1. **首页基准采集**：首次运行时，对每个原型 HTML 用 Edge headless 截取**无注入**的默认视图，记录 md5 为 `{proto_file}_home_md5`（缓存到 `.screenshot_baseline.json`）
+2. **逐图比对**：遍历 PRD 中所有 `<img src="coupon-prd-assets/*.png">`，读取本地 PNG 的 md5
+3. **交叉验证**：如果某截图的 md5 == 任一原型的首页基准 md5 → 该截图实际是首页，标记为 🔴 视图不匹配
+4. **map 校验**：如果有 `prototype_screenshot_map.json`，额外检查 map 中 `view` 字段非空的条目——其对应截图不应命中任何首页基准 md5
+
+**修复方式**：
+1. 确认该功能点应在原型中显示哪个视图（查看 map 的 `view` 字段或从 h4 标题推断）
+2. 创建临时副本 HTML，在 `</body>` 前注入 `<script>setTimeout(function(){if(typeof go==='function')go('VIEW_ID')},800)</script>`
+3. 用绝对路径 `--screenshot="ABSOLUTE_PATH"` 重截（相对路径可能写到 Edge 工作目录导致不覆盖）
+4. 截完后验证 md5 ≠ 首页基准 md5
+5. 推送新图替换 GitHub Pages 上的旧图
+
+**踩坑**：优惠券 PRD V1.0.32 发现 4.3.4 商品详情领券截图（coupon-app-product-detail-coupon.png, 67KB）实际是 App 首页菜单视图。根因：之前 --auto-fill 补图时用的注入方式在部分 Edge headless 实例中时序不稳定。修复后用「原型副本追加 script + 绝对路径输出 + virtual-time-budget=3000」三重保障重截，新图 134KB/md5=`c6932864…`，确认显示 C5 商品详情页。
+
 ## 自动补图（V1.0.30 新增 · 检出即补，不询问）
 
 **核心原则**：检测到缺图后**直接生成并插入截图**，不向用户确认。这是"不要出现很多图缺失"的根本保障——排查与修补在同一流程内闭环。
