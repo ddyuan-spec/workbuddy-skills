@@ -1116,7 +1116,7 @@ def scan_reuse_function_verbose(html_text):
             # 去掉标准答案后看还有没有废话
             remainder = clean.replace(standard, '').strip()
             # 去掉标点和空白
-            remainder = re.sub(r'[，。、：；""''（）()\s]', '', remainder)
+            remainder = re.sub(r'[，。、：；（）()\s]', '', remainder)
             if len(remainder) > 10:
                 warns.append(
                     f"🔴 **「已有-沿用」功能点写了冗余废话**（{heading}）："
@@ -1375,6 +1375,143 @@ def scan_scope_leak_feature(html_text, scope_keywords=None):
                     keyword, len(matches), '\n'.join(locations))
                 + "\n   👉 该功能/概念未纳入本期需求范围，应从 PRD 中全部删除。"
                 + "\n   💡 如确实要做，请先更新需求范围表（§三/§一）再加入功能说明。")
+
+    return (warns,)
+
+
+def scan_lazy_function_detail(html_text):
+    """扫描 §四 功能需求详情中「本期新增 / 本期改动」功能点是否偷懒（未按模板逐页面逐功能点拆解）。
+
+    规则 §4.23 LAZY_FUNCTION_DETAIL（沉淀自 2026-07-28 优惠券 PRD 评审）：
+    - 团队《PRD 输出规范》与 prd-detail-template.md 要求：每个功能点必须拆为
+      「列表字段表（字段名称/需求说明/备注）+ 排序/分页/合计/唯一性」
+      「功能按钮总表（功能名称/功能说明/备注）」
+      「每个按钮独立小节（功能说明/显示位置/权限/前置条件/功能实现=逐步+异常+校验文案）」
+      「查询条件表」「字段级数据来源」「状态流转」。
+    - 偷懒特征：功能点仅用一张「要素/说明」「项目/说明」「描述/说明」等汇总式扁平表
+      充当全部内容，缺少上述结构化子节。
+    - 已有-沿用（tag r）功能点不检查（按 §4.18 只需一句话）。
+    - 后端契约类（明确声明不涉前端）按模板「范围声明」豁免。
+
+    严重度：
+    - 🔴 无任何 <table>，或仅有一张 catch-all 汇总表而无任何结构化子节 → 偷懒，必须重写
+    - 🟡 缺字段级数据来源 / 缺前置条件·权限 → 需补充
+    """
+    import re as _re
+
+    warns = []
+
+    # 1. 截取 §四 区段
+    m4 = _re.search(r'<h2>\s*四[、.].*?</h2>(.*?)(?=<h2>\s*五[、.])', html_text, _re.S)
+    if not m4:
+        return (warns,)
+    sec4 = m4.group(1)
+
+    # 2. 切分功能点：仅 h4 作为功能点（h3 是端口大节，跳过不查）
+    parts = _re.split(r'(<h[34][^>]*>.*?</h[34]>)', sec4, maxsplit=0)
+    blocks = []  # (heading_text, body_html)
+    cur_h4 = None
+    cur_body = []
+    for chunk in parts:
+        if not chunk.strip():
+            continue
+        hm = _re.match(r'<h([34])[^>]*>(.*?)</h[34]>', chunk, _re.S)
+        if hm:
+            level = hm.group(1)
+            text = _re.sub(r'<[^>]+>', '', hm.group(2)).strip()
+            if level == '4':
+                if cur_h4 is not None:
+                    blocks.append((cur_h4, ''.join(cur_body)))
+                cur_h4 = text
+                cur_body = []
+            else:
+                # h3 端口大节：结束当前 h4 块，h3 自身不计入功能点
+                if cur_h4 is not None:
+                    blocks.append((cur_h4, ''.join(cur_body)))
+                    cur_h4 = None
+                    cur_body = []
+        else:
+            if cur_h4 is not None:
+                cur_body.append(chunk)
+    if cur_h4 is not None:
+        blocks.append((cur_h4, ''.join(cur_body)))
+
+    # 结构化表头特征
+    struct_patterns = [
+        _re.compile(r'字段名称'),
+        _re.compile(r'功能名称'),
+        _re.compile(r'查询条件'),
+        _re.compile(r'取值逻辑说明'),
+    ]
+    # catch-all 懒表特征（两列，首列是汇总词，次列是「说明」）
+    lazy_header = _re.compile(r'<th>(要素|项目|描述|内容|说明)</th><th>说明</th>')
+    # 跨章节引用豁免（明确「同 4.x / 见 4.x / 引用 / 逻辑同」的关联小节不查 🟡）
+    ref_pat = _re.compile(r'同\s+.*?4\.\d|见\s+4\.\d|引用|参考\s*平台端|详见\s+4\.|逻辑同')
+
+    def has_structured_table(body):
+        tables = _re.findall(r'<table>.*?</table>', body, _re.S)
+        for t in tables:
+            if any(p.search(t) for p in struct_patterns):
+                return True
+        return False
+
+    def has_any_table(body):
+        return '<table>' in body
+
+    def has_lazy_only(body):
+        tables = _re.findall(r'<table>.*?</table>', body, _re.S)
+        if not tables:
+            return False
+        # 有结构化表 → 不算懒
+        if has_structured_table(body):
+            return False
+        # 所有表都是 catch-all 汇总表 → 懒
+        for t in tables:
+            if lazy_header.search(t):
+                return True
+        return False
+
+    for heading, body in blocks:
+        if not heading:
+            continue
+        # 仅检查「本期新增 / 本期改动」功能点
+        if '本期新增' not in heading and '本期改动' not in heading:
+            continue
+        # 已有-沿用跳过
+        if '已有-沿用' in heading:
+            continue
+
+        # 🔴 无任何表
+        if not has_any_table(body):
+            warns.append(
+                f"🔴 **功能点「{heading}」偷懒：无任何字段/按钮明细表**。"
+                f"\n   按模板必须含列表字段表 / 功能按钮总表 / 查询条件等结构化子节，"
+                f"禁止仅用一段文字描述。")
+            continue
+
+        # 🔴 仅 catch-all 懒表
+        if has_lazy_only(body):
+            warns.append(
+                f"🔴 **功能点「{heading}」偷懒：仅用「要素/说明」类汇总表充当全部内容**。"
+                f"\n   必须按 prd-detail-template.md 拆为：列表字段表（字段名称/需求说明/备注）"
+                f"+ 排序/分页/合计/唯一性、功能按钮总表、每个按钮独立小节"
+                f"（功能说明/显示位置/权限/前置条件/功能实现=逐步+异常+校验文案）、"
+                f"查询条件表、字段级数据来源、状态流转。")
+
+        # 🟡 仅对「含结构化表 + 非跨章节引用」的真实详情小节做补充检查
+        is_ref = bool(ref_pat.search(body))
+        if is_ref:
+            continue
+        if has_structured_table(body):
+            if ('数据来源' not in body) and ('取值逻辑' not in body):
+                warns.append(
+                    f"🟡 **功能点「{heading}」缺字段级数据来源**："
+                    f"未说明字段来自《XX表》/调XX接口，需补「数据来源（字段级）」小节。")
+            # 含功能按钮总表的交互类功能点才查前置条件/权限
+            if ('功能按钮总表' in body) and ('前置条件' not in body) and ('权限' not in body):
+                warns.append(
+                    f"🟡 **功能点「{heading}」缺前置条件/权限说明**："
+                    f"需补按钮级前置条件与权限（菜单/数据范围）。")
 
     return (warns,)
 
@@ -1732,6 +1869,7 @@ def main():
     st_warns, = scan_scope_tag_mismatch(raw_html if raw_html else html_text, path)
     vn_warns, = scan_verbose_nfr_warnings(raw_html if raw_html else html_text)
     sl_warns, = scan_scope_leak_feature(raw_html if raw_html else html_text)
+    ld_warns, = scan_lazy_function_detail(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1948,6 +2086,20 @@ def main():
         print()
     else:
         print("✅ 未发现本期范围外的功能/概念泄漏。")
+
+    # ---- V1.0.22 新增：功能详情懒写检测 ----
+    if ld_warns:
+        print(f"### ✍️ 功能需求详情偷懒检测（{len(ld_warns)} 处，§4.23 逐页面逐功能点）")
+        for w in ld_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：每个「本期新增/本期改动」功能点必须按 prd-detail-template.md 拆为"
+              "列表字段表（字段名称/需求说明/备注）+ 排序/分页/合计/唯一性、"
+              "功能按钮总表、每个按钮独立小节（功能说明/显示位置/权限/前置条件/功能实现=逐步+异常+校验文案）、"
+              "查询条件表、字段级数据来源、状态流转。禁止仅用「要素/说明」汇总表充当全部内容。")
+        print()
+    else:
+        print("✅ 所有「本期新增/本期改动」功能点均按模板逐页面逐功能点拆解，无偷懒。")
 
     # ---------- 结论 ----------
     print()
