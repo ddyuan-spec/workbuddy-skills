@@ -111,7 +111,8 @@ RED_LINE_TERMS = ["商家端后台", "商家端", "回放", "火山SaaS", "火�
                   "SaaS配置", "SaaS 配置", "火山引擎直播配置", "火山直播配置"]
 RED_LINE_EXEMPT = ["不涉及", "不涵盖", "不在范围", "排除", "本期不含",
                    "本需求不含", "不含", "未涉及", "明确范围外", "不配置",
-                   "不开放", "不新增", "不支持"]
+                   "不开放", "不新增", "不支持",
+                   "本期包含", "为范围内", "范围内能力"]
 # 《泰小虎埋点表 v2.3》双表规范核心列（命中≥阈值视为符合）
 V23_CORE_COLS = ["事件编号", "项目", "所属层", "平台", "模块", "事件英文名",
                  "事件显示名", "事件类型", "属性英文名", "属性显示名",
@@ -127,40 +128,62 @@ DIAGRAM_KW = ["流程图", "架构图", "范围图", "状态机", "时序图", "
 # ---------------------------------------------------------------------------
 # 阶段4 扫描函数
 # ---------------------------------------------------------------------------
-def scan_red_line(text):
+def scan_red_line(text, raw_html=""):
     """红线词：用户裁定不纳入的端口/能力，出现须有明确'不涉及'豁免声明。
 
-    两级豁免：
-    1) 文档级豁免：PRD 含「红线豁免声明」块（写明某红线词为本需求「范围内」能力，
-       或写明「仅不涉及 XX」）时——被声明为范围内的词全文豁免；
-       被声明为不涉及的词，若声明块已覆盖，也全文豁免。
-       （红线词表沉淀自具体需求评审，跨需求存在范围差异，允许文档显式改判。）
-    2) 局部豁免：单次出现位置 ±30 字内含"不涉及/不在范围"等豁免词。
+    豁免方式：单次出现位置 ±30 字内含"不涉及/不在范围/本期不含"等豁免词。
+    若某红线词在本需求中属于「范围内」能力（如商家端后台），在首次出现处
+    附近写「本期包含XX」或「为范围内」即可命中局部豁免。
+
+    对 HTML 文件，优先用 raw_html 剥标签后的文本扫描（保留文档原始顺序），
+    避免 extract_html 先提 heading 导致上下文漂移。
     """
+    scan_text = re.sub(r'<[^>]+>', ' ', raw_html) if raw_html else text
     warns = []
-    # 文档级豁免声明块（取「红线豁免声明」出现处往后 300 字作为声明内容）
-    doc_exempt_terms = set()
-    for dm in re.finditer(r"红线豁免声明", text):
-        decl = text[dm.start(): dm.start() + 300]
-        for term in RED_LINE_TERMS:
-            if term in decl:
-                # 声明块中写为「范围内」或「不涉及」均视为已对该词作出裁定
-                doc_exempt_terms.add(term)
     for term in RED_LINE_TERMS:
-        if term in doc_exempt_terms:
-            continue
-        # 子串词被更长的已豁免词覆盖（如「商家端」被「商家端后台」声明覆盖）
-        if any(term in longer and longer != term for longer in doc_exempt_terms):
-            continue
-        for m in re.finditer(term, text):
-            ctx = text[max(0, m.start() - 30): m.start() + 30]
-            if not any(ex in ctx for ex in RED_LINE_EXEMPT):
-                warns.append(
-                    f"红线词「{term}」出现且附近无豁免声明（不涉及/不在范围等）；"
-                    f"若为范围外请明确写「本需求不涉及{term}」，禁止作为功能实现描述；"
-                    f"若为范围内能力请在文档加「红线豁免声明」块显式改判")
-                break
+        matches = list(re.finditer(term, scan_text))
+        if not matches:
+            continue  # 词未出现在文本中，跳过
+        has_exempt = False
+        for m in matches:
+            ctx = scan_text[max(0, m.start() - 30): m.end() + 30]
+            if any(ex in ctx for ex in RED_LINE_EXEMPT):
+                has_exempt = True
+                break  # 该词任一位置有豁免即可
+        if not has_exempt:
+            # 找不到任何带豁免的出现 → 告警
+            warns.append(
+                f"红线词「{term}」出现但全文无豁免声明（不涉及/本期包含/为范围内等）；"
+                f"若为范围外请写「本需求不涉及{term}」；"
+                f"若为范围内请在任意出现处附近加「本期包含{term}」或「为范围内」")
     return warns
+
+
+# 冗余声明检测模式（沉淀自评审：PRD 不应出现自证式免责/范围说明块）
+REDUNDANT_DECL_PATTERNS = [
+    ("红线豁免声明", "红线词显式改判块"),
+    ("范围豁免声明", "范围外能力声明块"),
+    ("免责声明", "通用免责块"),
+    ("本需求仅不涉及.*按用户裁定", "裁定引用式排除声明"),
+    ("与「.*」需求相互独立", "跨需求对比声明"),
+]
+
+
+def scan_redundant_declarations(text):
+    """扫描 PRD 中的冗余声明/免责/自证式范围说明块。
+
+    原则：PRD 应直接写「做什么、怎么做」，不需要插入一段话解释
+    「为什么某个词不是红线 / 为什么包含某端口 / 与其他需求的关系」。
+    这类内容属于评审过程产物，不应出现在定稿 PRD 中。
+
+    返回匹配列表 [(模式名, 描述, 摘要片段), ...]。
+    """
+    hits = []
+    for pat_name, desc in REDUNDANT_DECL_PATTERNS:
+        for m in re.finditer(pat_name, text):
+            snippet = text[max(0, m.start() - 10): m.end() + 60].replace('\n', ' ')
+            hits.append((pat_name, desc, snippet))
+    return hits
 
 
 def scan_uncertain_traceability(text):
@@ -460,11 +483,12 @@ def main():
     print()
     print("## 阶段4：红线与图文一致性扫描（沉淀自评审踩坑）")
     print()
-    rl = scan_red_line(text)
+    rl = scan_red_line(text, raw_html)
     ut = scan_uncertain_traceability(text)
     tv = scan_tracking_v23(text, norm)
     dg_found, dg_check = scan_diagram_consistency(text)
     tq_struct, tq_style, tq_cnt = scan_table_quality(raw_html) if raw_html else ([], [], 0)
+    rd_hits = scan_redundant_declarations(text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -515,6 +539,18 @@ def main():
     else:
         print("（未检测到 <table> 标签，跳过表格质量扫描）")
 
+    # 冗余声明扫描
+    if rd_hits:
+        print(f"### 🗑️ 冗余声明（{len(rd_hits)} 处，建议删除）")
+        for pat_name, desc, snippet in rd_hits:
+            print(f"- ⚠️ [{desc}] 命中「{pat_name}」：…{snippet}…")
+        print()
+        print("处理要求：PRD 应直接写「做什么/怎么做」，不需要自证式免责/范围说明块。")
+        print("除非用户明确要求保留，否则一律删除。")
+        print()
+    else:
+        print("✅ 未发现冗余声明/免责块。")
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -543,10 +579,11 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
-    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct)
+    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits)
     if red_total:
         print(f"⚠️ **阶段4 发现 {red_total} 处风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)}"
-              f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}）："
+              f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}"
+              f" / 冗余声明 {len(rd_hits)}）："
               "须逐项确认或修正后再定稿。")
     print()
 
