@@ -242,6 +242,112 @@ def scan_diagram_consistency(text):
 
 
 # ---------------------------------------------------------------------------
+# 阶段4 扩展：业务流程图一致性扫描
+# 沉淀自评审踩坑：PRD 内画的流程图与已梳理确认的泳道流程图偏离
+# 规则：没有已梳理的业务流程图 → 必须先画出来确认再写 PRD；
+#       有已梳理图 → PRD §三 流程图必须与其一致（节点/阶段/泳道不遗漏）
+# ---------------------------------------------------------------------------
+def scan_flow_diagram_consistency(html_text, plain_text):
+    """检测 PRD 业务流程图与已梳理基线流程图的一致性。
+
+    检测项：
+      🔴 必须修：
+        1) PRD 含「业务流程图」但无「已梳理/基线/横向泳道/全链路」等基线声明
+           → 说明 PRD 作者未基于已确认的流程图画图，可能脑补/简化
+        2) PRD 无业务流程图但正文有流程相关章节（§三）
+           → 缺少流程图，必须补
+      🟡 建议查：
+        3) 图中提取的关键节点词在正文功能模块列表中覆盖率低
+
+    返回 (warns, info_list)。
+    """
+    import re
+    warns = []
+    infos = []
+
+    # 1) 是否有业务流程图（SVG / img + 流程图关键词）
+    has_svg = '<svg' in html_text or ('<img' in html_text and '流程图' in html_text)
+    flow_section = bool(re.search(r'(业务|数据)?流程[图表]', plain_text))
+
+    if not has_svg and not flow_section:
+        return [], []  # 完全无流程图相关内容，不告警（可能本需求不需要）
+
+    # 2) 有流程图章节但无 SVG/img → 缺图
+    if flow_section and not has_svg:
+        warns.append(
+            "PRD 含「流程图」章节标题但未检测到 <svg> 或 <img> 图形内容；"
+            "必须补画业务流程图后再定稿")
+
+    # 3) 有图但无基线声明 → 核心告警
+    if has_svg:
+        baseline_kw = [
+            "已梳理", "横向泳道", "泳道图",
+            "与.*流程图一致", "依据.*梳理",
+            "流程图（横向", "流程图（泳道",
+            "本图与", "沿用.*流程图.*一致",
+        ]
+        # 找到流程图/SVG 在文中的位置，仅在该位置前后 600 字范围内
+        # 搜索基线声明（避免全文其他位置的"基线""全链路"等词误命中）
+        svg_pos = html_text.find('<svg')
+        if svg_pos < 0:
+            svg_pos = html_text.find('<img')
+        # 也尝试从 plain_text 中找"业务流程图"标题位置
+        flow_heading = re.search(r'业务流程[图表]', plain_text)
+        heading_pos = flow_heading.start() if flow_heading else -1
+
+        # 取流程图附近的纯文本窗口（取 SVG 位置和标题位置中较前的，往前/后各扩展）
+        search_start = max(0, min(
+            svg_pos if svg_pos > 0 else len(plain_text),
+            heading_pos if heading_pos > 0 else len(plain_text)
+        ) - 200)
+        search_end = min(len(plain_text), max(
+            svg_pos if svg_pos > 0 else 0,
+            heading_pos if heading_pos > 0 else 0
+        ) + 600)
+        nearby_text = plain_text[search_start:search_end]
+
+        has_baseline = any(re.search(kw, nearby_text) for kw in baseline_kw)
+        if not has_baseline:
+            warns.append(
+                "🔴 **业务流程图缺少基线声明**："
+                "PRD 中检测到流程图（<svg>），但未找到「已梳理/基线/横向泳道/全链路/"
+                "与XX流程图一致」等基线引用说明。"
+                "\n   规则：PRD §三 的业务流程图**必须基于已梳理确认的业务流程图绘制**"
+                "（如需求梳理阶段产出的横向泳道全链路图），不得自行简化或另画。"
+                "\n   修正：① 若已有已梳理的流程图 → 在流程图旁标注"
+                "「本图与《XX业务流程图（横向泳道）》一致」并确保节点/阶段/泳道对应；"
+                "② 若尚未梳理 → 必须**先停止写 PRD**，先画出业务流程图（推荐横向泳道）"
+                "经你确认后，再基于该图画 PRD 流程图。")
+
+        # 4) 提取图中文字节点与正文模块列表做覆盖度检查
+        # 从 SVG <text> 标签提取节点文字
+        svg_texts = re.findall(r'<text[^>]*>([^<]+)</text>', html_text)
+        # 过滤掉太短的和纯数字/符号的
+        nodes = [t.strip() for t in svg_texts
+                 if len(t.strip()) >= 4 and not re.match(r'^[\d\s·•\-\→↓↑←]+$',
+                                                           t.strip())]
+        if nodes:
+            # 从正文中提取功能模块词（通常在表格 or 列表中）
+            module_patterns = r'(优惠券?管理|发券活动|领券活动|券模板|核销|退券|' \
+                              r'数据看板|用户券|获券弹窗|发券引擎|配置券|' \
+                              r'添加券|编辑券|下架券|支付成功|触发条件|用券)'
+            modules_found = set(re.findall(module_patterns, plain_text))
+            # 节点中能匹配到模块词的数量
+            node_plain = ' '.join(nodes)
+            matched = sum(1 for m in modules_found if m in node_plain)
+            coverage = matched / len(modules_found) * 100 if modules_found else 100
+            if coverage < 50:
+                infos.append(
+                    f"流程图节点对正文功能模块覆盖度偏低（约 {coverage:.0f}%）；"
+                    f"建议确认图中是否遗漏关键环节（如制券模板库、发券引擎、"
+                    f"数据看板、核销引擎等后台/服务端环节）")
+            else:
+                infos.append(f"流程图节点对正文功能模块覆盖度约 {coverage:.0f}% ✅")
+
+    return warns, infos
+
+
+# ---------------------------------------------------------------------------
 # 阶段4 扩展：表格质量扫描
 # 沉淀自 PRD 评审常见表格异常：结构错误、渲染塌陷、排版不一致
 # ---------------------------------------------------------------------------
@@ -489,6 +595,7 @@ def main():
     dg_found, dg_check = scan_diagram_consistency(text)
     tq_struct, tq_style, tq_cnt = scan_table_quality(raw_html) if raw_html else ([], [], 0)
     rd_hits = scan_redundant_declarations(text)
+    fd_warns, fd_infos = scan_flow_diagram_consistency(raw_html if raw_html else html_text, text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -551,6 +658,19 @@ def main():
     else:
         print("✅ 未发现冗余声明/免责块。")
 
+    # 业务流程图一致性扫描
+    if fd_warns or fd_infos:
+        print(f"### 🔄 业务流程图一致性（{len(fd_warns)} 告警 / {len(fd_infos)} 提示）")
+        for w in fd_warns:
+            print(f"- {w}")
+            print()
+        for i in fd_infos:
+            print(f"- 💡 {i}")
+        if not fd_warns:
+            print()
+    else:
+        pass  # 无流程图相关内容，静默跳过
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -579,11 +699,11 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
-    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits)
+    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns)
     if red_total:
         print(f"⚠️ **阶段4 发现 {red_total} 处风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)}"
               f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}"
-              f" / 冗余声明 {len(rd_hits)}）："
+              f" / 冗余声明 {len(rd_hits)} / 流程图一致性 {len(fd_warns)}）："
               "须逐项确认或修正后再定稿。")
     print()
 
