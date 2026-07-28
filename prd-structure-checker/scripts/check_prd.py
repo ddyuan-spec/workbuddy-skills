@@ -1269,6 +1269,143 @@ def scan_scope_tag_mismatch(html_text, prd_path=None):
     return (warns,)
 
 
+def scan_requirement_md_tag_mismatch(html_text, prd_path=None):
+    """扫描 PRD 功能点 tag 与业务梳理 MD 表格的状态是否矛盾（v1.0.24 沉淀自评审）。
+
+    规则 §4.24 REQUIREMENT_MD_TAG_MISMATCH：
+    - 业务梳理 MD（线下定稿/范围确认）是功能状态的**唯一权威来源**
+    - MD 中标注「暂无/需新增/暂无仅xx有」的功能 → PRD 必须标「本期新增」
+    - 若 PRD 标了「已有-沿用」但 MD 说需要新增 → 🔴 矛盾
+
+    数据源：同目录下含「需求梳理」「线下定稿」「范围已确认」关键词的 .md 文件。
+    解析其中的 Markdown 表格（列：影响端口 / 影响周期 / 影响功能 / 功能状态）。
+
+    匹配方式：PRD h4 标题关键词与 MD「影响功能」列做模糊匹配（重叠词 ≥2 个即命中）。
+    """
+    warns = []
+    if not prd_path:
+        return (warns,)
+
+    prd_dir = os.path.dirname(os.path.abspath(prd_path))
+
+    # 1. 查找业务梳理 MD 文件
+    md_files = glob.glob(os.path.join(prd_dir, '*需求梳理*.md'))
+    md_files += glob.glob(os.path.join(prd_dir, '*线下定稿*.md'))
+    md_files += glob.glob(os.path.join(prd_dir, '*范围*确认*.md'))
+    md_files += glob.glob(os.path.join(prd_dir, '*功能生命周期*.md'))
+
+    if not md_files:
+        return (warns,)
+
+    # 2. 解析 MD 表格 → 提取 (端口, 功能名, 状态) 三元组
+    md_entries = []  # [(port, feature, status), ...]
+    for md_path in md_files:
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception:
+            continue
+
+        # 匹配 Markdown 表格行：| 端口 | 周期 | 功能 | 状态 |
+        # 跳过表头（|---|---|---|---|）和分隔行
+        lines = content.split('\n')
+        in_table = False
+        header_cols = None
+        for line in lines:
+            stripped = line.strip()
+            if not stripped.startswith('|'):
+                in_table = False
+                continue
+            cells = [c.strip() for c in stripped.split('|')[1:-1]]  # 去掉首尾空元素
+            if not cells:
+                continue
+            # 检测表头或分隔行
+            if all(set(c) <= set('-: ') or not c for c in cells):
+                continue
+            # 首行数据行作为表头
+            if not in_table and any('端口' in c or '影响' in c or '功能' in c for c in cells):
+                header_cols = cells
+                in_table = True
+                continue
+            if in_table and len(cells) >= 4:
+                # 尝试定位端口/功能/状态列
+                port_idx = None
+                feat_idx = None
+                status_idx = None
+                for i, col in enumerate(header_cols or []):
+                    cl = col.lower()
+                    if '端口' in cl or '端' == cl:
+                        port_idx = i
+                    elif '功能' in cl:
+                        feat_idx = i
+                    elif '状态' in cl:
+                        status_idx = i
+                # fallback：按常见顺序 [端口, 周期, 功能, 状态]
+                if port_idx is None and len(cells) >= 1:
+                    port_idx = 0
+                if feat_idx is None and len(cells) >= 3:
+                    feat_idx = 2
+                if status_idx is None and len(cells) >= 4:
+                    status_idx = 3
+                if port_idx is not None and feat_idx is not None and status_idx is not None:
+                    port = cells[port_idx]
+                    feature = cells[feat_idx]
+                    status = cells[status_idx]
+                    if port and feature and status:
+                        md_entries.append((port, feature, status))
+
+    if not md_entries:
+        return (warns,)
+
+    # 3. 判定哪些 MD 条目表示"应为新增"
+    def is_status_new(s):
+        sl = s.lower().replace('，', ',').replace('。', '').replace(' ', '')
+        new_keywords = ['暂无', '需新增', '需新', '本期不做' not in s and ('新增' in sl or 'new')]
+        no_only_keywords = ['仅商家端有', '仅有', '仅xx有']
+        return any(kw in s for kw in new_keywords) or any(kw in s for kw in no_only_keywords)
+
+    # 4. 提取 PRD §四 h4 功能点及其 tag
+    prd_sections = []
+    for m in re.finditer(
+        r'<h[34][^>]*>(\d+\.\d+[\.\d]*)\s*(.*?)\s*<span\s+class="tag\s+(\w)"[^>]*>([^<]+)</span>',
+        html_text, re.IGNORECASE
+    ):
+        section_id = m.group(1)
+        title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+        tag_class = m.group(3)  # y=新增, r=沿用, g=改动
+        tag_text = m.group(4).strip()
+        prd_sections.append((section_id, title, tag_class, tag_text))
+
+    # 5. 交叉比对
+    for p_section_id, p_title, p_tag_class, p_tag_text in prd_sections:
+        # 只检查标为"已有-沿用"的（这些可能是错的）
+        if p_tag_text != '已有-沿用':
+            continue
+
+        # 提取标题中的关键词（去掉编号、括号内容）
+        p_keywords = set(re.sub(r'[()\[\]{}0-9./\s]', '', p_title))
+
+        for md_port, md_feature, md_status in md_entries:
+            # 先匹配端口：PRD 标题或上下文中是否包含该端口
+            # （简化处理：如果 MD 的端口出现在附近文本中则认为匹配）
+            md_feat_keywords = set(re.sub(r'[()\[\]{}，。、/\s]', '', md_feature))
+
+            # 关键词重叠度
+            overlap = p_keywords & md_feat_keywords
+            if len(overlap) >= 2:  # 至少 2 个关键词匹配
+                if is_status_new(md_status):
+                    warns.append(
+                        f"🔴 **PRD 功能点 tag 与业务梳理 MD 矛盾**（{p_section_id} {p_title}）："
+                        f"\n   PRD 标注：「{p_tag_text}」（{p_tag_class}）"
+                        f"\n   业务梳理 MD（{md_port}）：「{md_feature}」→ 状态：「{md_status}」"
+                        f"\n   判定：MD 明确表示此功能**不存在/需新增**，PRD 不应标为「已有-沿用」。"
+                        f"\n   处理方式：改为 <span class=\"tag y\">本期新增</span> 并补充详细 FR。"
+                        f"\n   触发规则 §4.24 REQUIREMENT_MD_TAG_MISMATCH")
+                    break  # 每个 PRD section 只报一次
+
+    return (warns,)
+
+
 def scan_verbose_nfr_warnings(html_text):
     """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
 
@@ -1851,6 +1988,7 @@ def main():
     vn_warns, = scan_verbose_nfr_warnings(raw_html if raw_html else html_text)
     sl_warns, = scan_scope_leak_feature(raw_html if raw_html else html_text)
     ld_warns, = scan_lazy_function_detail(raw_html if raw_html else html_text)
+    rmtm_warns, = scan_requirement_md_tag_mismatch(raw_html if raw_html else html_text, path)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -2081,6 +2219,17 @@ def main():
         print()
     else:
         print("✅ 所有「本期新增/本期改动」功能点均按模板逐页面逐功能点拆解，无偷懒。")
+
+    if rmtm_warns:
+        print(f"### 📋 PRD tag 与业务梳理 MD 矛盾（{len(rmtm_warns)} 处，§4.24 MD交叉比对）")
+        for w in rmtm_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：以业务梳理 MD（线下定稿/范围确认）为唯一权威来源，"
+              "MD 标注「暂无/需新增」的功能必须标 <span class=\"tag y\">本期新增</span> 并补详细 FR。")
+        print()
+    else:
+        pass  # 无 MD 文件或无矛盾时不输出
 
     # ---------- 结论 ----------
     print()
