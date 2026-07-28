@@ -360,7 +360,7 @@ meta 关键词清单：
 
 **修复方式**：
 1. 用 Edge headless 对原型 HTML 截图：`msedge.exe --headless --disable-gpu --screenshot=out.png --window-size=1280,3000 "file:///path/to/原型.html"`
-2. 将 `<p>原型示意：<a href="xxx.html">xxx</a></p>` 替换为 `<p>原型示意：</p><img src="原型截图/xxx.png" style="max-width:100%;border:1px solid #e0e0e0;border-radius:8px;">`
+2. 将 `<p>原型示意：<a href="xxx.html">xxx</a></p>` 替换为 `<p>原型示意：</p><img src="coupon-prd-assets/xxx.png" style="max-width:100%;max-height:800px;border:1px solid #e0e0e0;border-radius:8px;object-fit:contain;">`
 3. 截图文件需与 PRD 同目录或子目录（如 `原型截图/`），并推送到 GitHub
 
 **踩坑**：优惠券 PRD V1.0.13 的 4 处原型示意全部为链接形式（coupon-platform / coupon-merchant / coupon-app / coupon-mini-h5），V1.0.14 全部替换为 Edge headless 截图。
@@ -383,7 +383,7 @@ meta 关键词清单：
 **标准 img 标签模板**（必须包含）：
 ```html
 <img src="coupon-prd-assets/xxx.png"
-     style="max-width:100%;border:1px solid #e0e0e0;border-radius:8px;"
+     style="max-width:100%;max-height:800px;border:1px solid #e0e0e0;border-radius:8px;object-fit:contain;"
      alt="xxx端原型">
 ```
 
@@ -393,6 +393,32 @@ meta 关键词清单：
 3. `<img>` 标签补全 style + alt
 
 **踩坑**：优惠券 PRD V1.0.14~V1.0.15 的 4 张截图因路径不匹配（`原型截图/` vs `coupon-prd-assets/`）+ 未推送，导致线上持续显示破损图标直至 V1.0.16 修复。
+
+### §4.17 PROTOTYPE_IMAGE_OVERSIZED — 原型截图像素尺寸不得过大（v1.0.17）
+
+**问题**：PRD「原型示意」截图在页面中渲染后产生大量空白（一张图占大半屏），读者需要大量滚动才能看到后续内容。
+- **根因**：Edge headless 截图时 `--window-size` 高度设为整页滚动值（如 1280×3000），导致 PNG 文件包含大量无效空白区域
+- **实际数据**（优惠券 PRD V1.0.16）：platform 1280×3000px / merchant 1280×3000px / app 1280×2000px / mini-h5 1280×1200px
+
+**规则**：读取 PNG 文件 IHDR chunk 获取实际像素尺寸，超过阈值即告警：
+
+| 阈值 | 值 | 严重度 | 说明 |
+|------|-----|--------|------|
+| 高度上限 | **1200px** | 🔴 | 超过则渲染后产生大量空白 |
+| 宽度上限 | **1920px** | 🟡 | 通常不影响但浪费空间 |
+
+**标准 img 标签模板**（必须包含，与 §4.16 合并）：
+```html
+<img src="coupon-prd-assets/xxx.png"
+     style="max-width:100%;max-height:800px;border:1px solid #e0e0e0;border-radius:8px;object-fit:contain;"
+     alt="xxx端原型">
+```
+
+**修复方式（二选一）**：
+1. **CSS 兜底**（立即生效）：给 `<img>` 加 `max-height:800px;object-fit:contain;` 约束渲染高度
+2. **重新截图**（根治）：缩小 Edge headless 的 `--window-size` 高度参数（建议 ≤1200）
+
+**踩坑**：优惠券 PRD 4 张截图全部超高，V1.0.17 统一加 `max-height:800px;object-fit:contain;` 修复；§4.16/§4.17 共用同一 regex（支持跨段落匹配 `原型示意：</p><p><img>`）。
 
 ## 文件说明
 
