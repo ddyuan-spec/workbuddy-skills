@@ -330,17 +330,21 @@ def scan_flow_diagram_consistency(html_text, plain_text):
             # 从正文中提取功能模块词（通常在表格 or 列表中）
             module_patterns = r'(优惠券?管理|发券活动|领券活动|券模板|核销|退券|' \
                               r'数据看板|用户券|获券弹窗|发券引擎|配置券|' \
-                              r'添加券|编辑券|下架券|支付成功|触发条件|用券)'
+                              r'添加券|编辑券|下架券|支付成功|触发条件|用券|' \
+                              r'商品详情|商详)'  # 新增：商品详情/商详
             modules_found = set(re.findall(module_patterns, plain_text))
+            # 排除合理不在主流程中的模块（只读查询/辅助功能）
+            skip_modules = {'数据看板'}
+            modules_relevant = modules_found - skip_modules
             # 节点中能匹配到模块词的数量
             node_plain = ' '.join(nodes)
-            matched = sum(1 for m in modules_found if m in node_plain)
-            coverage = matched / len(modules_found) * 100 if modules_found else 100
+            matched = sum(1 for m in modules_relevant if m in node_plain)
+            coverage = matched / len(modules_relevant) * 100 if modules_relevant else 100
             if coverage < 50:
                 infos.append(
                     f"流程图节点对正文功能模块覆盖度偏低（约 {coverage:.0f}%）；"
                     f"建议确认图中是否遗漏关键环节（如制券模板库、发券引擎、"
-                    f"数据看板、核销引擎等后台/服务端环节）")
+                    f"核销引擎等后台/服务端环节）")
             else:
                 infos.append(f"流程图节点对正文功能模块覆盖度约 {coverage:.0f}% ✅")
 
@@ -380,16 +384,31 @@ def scan_state_machine(plain_text, html_text):
         return [], []
 
     # ---- 1) 宽泛起始状态检测（任意→破坏性操作）----
+    # 优化：限制匹配窗口 ≤80 字符；排除非状态机上下文（如"全部功能模块"/"全部会员"/"全部店铺"）
     loose_start = re.findall(
-        r'[^>](任意|所有|全部|无论.*状态)[^<]*\s*(删除|作废|回滚|下架)',
+        r'[^>](任意|所有|全部|无论.*状态)[^<]{0,80}\s*(删除|作废|回滚|下架)',
         plain_text)
-    if loose_start:
-        for start, action in loose_start:
-            warns.append(
-                f"🔴 状态转换表存在宽泛起始状态「{start}→{action}」："
-                f"缺少状态守卫。通常「{action}」操作应限制在特定状态下执行"
-                f"（如仅「下架」状态可「删除」，或「启用」状态须先「下架」）。"
-                f"请补充每个状态的合法转换路径。")
+    # 排除非状态机上下文的误报
+    skip_ctx = ['功能模块', '会员', '店铺', '端口', '字段', '列', '记录',
+                '适用', '可选', '涉及', '包含', '覆盖']
+    filtered = []
+    for start, action in loose_start:
+        # 找到原始匹配的完整文本位置
+        m = re.search(
+            re.escape(start) + r'[^\n]{0,80}' + re.escape(action), plain_text)
+        if not m:
+            continue
+        seg = m.group(0)
+        # 如果匹配段内含非状态机上下文关键词 → 跳过
+        if any(ctx in seg for ctx in skip_ctx):
+            continue
+        filtered.append((start, action))
+    for start, action in filtered:
+        warns.append(
+            f"🔴 状态转换表存在宽泛起始状态「{start}→{action}」："
+            f"缺少状态守卫。通常「{action}」操作应限制在特定状态下执行"
+            f"（如仅「下架」状态可「删除」，或「启用」状态须先「下架」）。"
+            f"请补充每个状态的合法转换路径。")
 
     # ---- 2) 破坏性操作前置条件检测 ----
     destructive_ops = ['删除', '作废', '回滚', '强制结束']
