@@ -21,6 +21,7 @@ PRD 结构排查脚本
 
 import sys
 import os
+import glob
 import re
 import zipfile
 from xml.etree import ElementTree as ET
@@ -1202,6 +1203,182 @@ def scan_prototype_screen_ratio(html_text, prd_path=None):
     return (warns,)
 
 
+def scan_scope_tag_mismatch(html_text, prd_path=None):
+    """扫描功能点 tag 标注是否与业务梳理表范围一致（v1.0.21 沉淀自评审）。
+
+    规则 §4.20 SCOPE_TAG_MISMATCH：
+    - PRD 中每个功能点的 tag（已有-沿用 / 本期新增 / 本期改动）必须与
+      需求梳理阶段确认的范围表（MD/Excel）一致
+    - 检测方式：读取 PRD 同目录下的业务梳理 MD 文件，提取「功能×端口」矩阵，
+      与 PRD §四 中的 tag 对照
+    - 若无业务梳理文件 → 🟡 提示「建议提供业务梳理表供对照」
+    - 若 tag 与梳理表矛盾 → 🔴 报告具体差异
+
+    踩坑：优惠券 PRD V1.0.17 把 App 端的商详领券/我的优惠券/下单核销
+    错标为「已有-沿用」（套用了小程序/H5 的状态），实际 App 全链路均为
+    「暂无，需新增」。V1.0.18 修正。
+    """
+    warns = []
+
+    # 基于 PRD 路径查找同目录下的业务梳理 MD
+    if prd_path:
+        prd_dir = os.path.dirname(os.path.abspath(prd_path))
+    else:
+        prd_dir = os.path.dirname(os.path.abspath(__file__))
+    md_files = glob.glob(os.path.join(prd_dir, '*需求梳理*.md'))
+    md_files += glob.glob(os.path.join(prd_dir, '*范围*.md'))
+    md_files += glob.glob(os.path.join(prd_dir, '*功能生命周期*.md'))
+
+    if not md_files:
+        # 尝试更广的搜索
+        md_files = glob.glob(os.path.join(prd_dir, '..', '..',
+                                           '优惠券新需求', '*.md'))
+        md_files = [f for f in md_files if '需求' in f or '范围' in f or '生命周期' in f]
+
+    if not md_files:
+        warns.append(
+            "🟡 **未找到业务梳理 MD 文件**："
+            "无法对照功能点 tag 与需求范围。"
+            "\n   建议：在同目录或父目录放置含「功能×端口」范围标注的需求梳理 MD "
+            "（如《优惠券需求梳理（线下定稿）.md》或《功能生命周期标注-范围已确认.md》）。")
+        return (warns,)
+
+    # 读取业务梳理 MD，提取各端口的功能范围
+    scope_map = {}  # {端口: {功能名: '新增'|'已有'|'改动'}}
+    for md_path in md_files:
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+            # 简单启发式：找表格或列表中的范围标注
+            # 匹配类似 "App | 暂无，需新增" 或 "App端 | 新增" 的模式
+            for m in re.finditer(
+                r'(?:App|APP|app|客户端|C端)[^\n]*?[|:：]\s*(.*?)(?:\n|$)',
+                md_content, re.IGNORECASE
+            ):
+                val = m.group(1).strip()
+                if any(k in val for k in ['暂无', '需新增', '新增', 'new']):
+                    scope_map.setdefault('App', {})['_default'] = '本期新增'
+                elif any(k in val for k in ['已有', '沿用', 'existing']):
+                    scope_map.setdefault('App', {})['_default'] = '已有-沿用'
+        except Exception:
+            pass
+
+    # 检查 PRD 中 App 端功能点的 tag
+    app_sections = re.finditer(
+        r'<h[34][^>]*>4\.3[.\d]*\s*App[^<]*<span\s+class="tag\s+(\w)"[^>]*>([^<]+)</span>',
+        html_text, re.IGNORECASE
+    )
+    for m in app_sections:
+        tag_class = m.group(1)  # y / r / g
+        tag_text = m.group(2).strip()
+        heading = re.sub(r'<[^>]+>', '', m.group(0)[:80])
+
+        if 'App' in scope_map and '_default' in scope_map['App']:
+            expected = scope_map['App']['_default']
+            if expected == '本期新增' and tag_text == '已有-沿用':
+                warns.append(
+                    f"🔴 **App 端功能点 tag 与业务梳理表不一致**（{heading}）："
+                    f"\n   PRD 标注：「{tag_text}」"
+                    f"\n   业务梳理表标注：应为「{expected}」（App 端全链路新增）"
+                    f"\n   ⚠️ 可能原因：错误套用了其他端口（如小程序/H5）的状态标注。")
+
+    if not warns and scope_map:
+        pass  # OK, no mismatch found
+
+    return (warns,)
+
+
+def scan_verbose_nfr_warnings(html_text):
+    """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
+
+    规则 §4.21 VERBOSE_NFR_WARNING：
+    - §五（非功能性需求）/ §七（边界条件）/ §八（文档维护）等非核心功能章节中，
+      不应出现大段「⚠️ 注意」「处理要求」「一码一状态」等操作指引型文字
+    - 这些内容属于开发/测试执行规范，不是产品需求文档的内容
+    - 检测 <div class="warn"> / <div class="note"> 在 §五~§九 中的出现
+    - 若内容超过 40 字且包含「注意/处理要求/确保/须按/禁止凭空」等关键词 → 🔴 冗余
+
+    踩坑：优惠券 PRD V1.0.20 的 §5.1 埋点需求中有 ~120 字的 warn 框
+    （"需对齐埋点表 v2.3...禁止凭空定版...本期已移除的埋点..."），
+    属于操作指引而非需求说明，V1.0.21 删除。
+    """
+    warns = []
+
+    # 找到 §五~§九 范围内的 warn/note 框
+    section_match = re.search(
+        r'五、非功能性需求[\s\S]*?(?=十、|$)', html_text)
+    if not section_match:
+        return (warns,)
+
+    section_text = section_match.group(0)
+
+    for box_type in ['warn', 'note']:
+        pattern = rf'<div class="{box_type}">(.*?)</div>'
+        for m in re.finditer(pattern, section_text, re.DOTALL):
+            content = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+            # 去掉空白字符后检查长度
+            clean_len = len(re.sub(r'\s', '', content))
+            verbose_keywords = ['注意', '处理要求', '确保', '须按', '禁止凭空',
+                                '引用参数一律', '本期已移除', '一码', '事件树']
+            has_verbose = any(kw in content for kw in verbose_keywords)
+
+            if clean_len > 40 and has_verbose:
+                short = content[:80] + ('...' if len(content) > 80 else '')
+                warns.append(
+                    f"🔴 **非功能性需求章节存在冗余说明框**（<{box_type}>）："
+                    f"\n   内容：「{short}」"
+                    f"\n   字数：{clean_len}字（>{40}字阈值）"
+                    f"\n   含冗余关键词：{[kw for kw in verbose_keywords if kw in content]}"
+                    f"\n   👉 此类操作指引不属于 PRD 需求说明，应删除。")
+
+    return (warns,)
+
+
+def scan_scope_leak_feature(html_text, scope_keywords=None):
+    """扫描 PRD 中出现了不在本期功能范围内的功能/概念（v1.0.21 沉淀自评审）。
+
+    规则 §4.22 SCOPE_LEAK_FEATURE：
+    - PRD 正文中不应出现未纳入本期范围的功能名称、业务概念或约束规则
+    - 典型表现：底价保护、SaaS 配置、火山引擎 XX 能力等未在本期交付的功能
+      却出现在功能说明/状态转换表/API 清单/验收标准/边界清单中
+    - 检测方式：维护一个「已知范围外概念」列表 + 启发式模式匹配
+    - 若 PRD 中出现范围外概念 → 🔴 报告位置并建议删除
+
+    注意：此规则需要人工维护 scope_keywords 列表（每期需求不同），
+    默认检测常见泄漏模式。完全准确需要对照需求范围表逐项核对。
+
+    踩坑：优惠券 PRD V1.0.20 在 9 处出现「底价保护」（一背景/二状态转换表/
+    三API清单/4.3.5详细逻辑/note框/AC验收/§七边界），但底价保护并未纳入
+    本期功能范围。V1.0.21 全部清除。
+    """
+    warns = []
+    if scope_keywords is None:
+        # 默认常见范围外概念（可按项目配置）
+        scope_keywords = ['底价保护', '最低零售价.*击穿', 'min_retail_price']
+
+    for keyword in scope_keywords:
+        matches = list(re.finditer(keyword, html_text, re.IGNORECASE))
+        if matches:
+            locations = []
+            for mm in matches[:8]:  # 最多报 8 处
+                pos = mm.start()
+                # 取前后各 30 字符定位上下文
+                start = max(0, pos - 30)
+                end = min(len(html_text), pos + len(mm.group()) + 30)
+                ctx = html_text[start:end]
+                ctx = re.sub(r'<[^>]+>', '', ctx).replace('\n', ' ').strip()
+                locations.append(f'  ...{ctx}...')
+
+            warns.append(
+                "🔴 **PRD 出现本期范围外的功能/概念**「{}」："
+                "\n   共出现 {} 处：{}".format(
+                    keyword, len(matches), '\n'.join(locations))
+                + "\n   👉 该功能/概念未纳入本期需求范围，应从 PRD 中全部删除。"
+                + "\n   💡 如确实要做，请先更新需求范围表（§三/§一）再加入功能说明。")
+
+    return (warns,)
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -1551,6 +1728,11 @@ def main():
     rv_warns, = scan_reuse_function_verbose(raw_html if raw_html else html_text)
     sr_warns, = scan_prototype_screen_ratio(raw_html if raw_html else html_text, path)
 
+    # ---- 新增：范围一致性 / 冗余框 / 范围泄漏检测（V1.0.21）----
+    st_warns, = scan_scope_tag_mismatch(raw_html if raw_html else html_text, path)
+    vn_warns, = scan_verbose_nfr_warnings(raw_html if raw_html else html_text)
+    sl_warns, = scan_scope_leak_feature(raw_html if raw_html else html_text)
+
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
         for w in rl:
@@ -1732,6 +1914,40 @@ def main():
         print()
     else:
         print("✅ 所有原型截图屏幕比例正确（PC端≥1000px / 移动端≤500px）。")
+
+    # ---- V1.0.21 新增规则输出 ----
+    if st_warns:
+        print(f"### 📋 功能点 tag 与业务梳理表不一致（{len(st_warns)} 处，§4.20 范围对照）")
+        for w in st_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：对照需求梳理阶段确认的范围表（MD/Excel），"
+              "修正功能点 tag 标注。禁止跨端口套用状态。")
+        print()
+    else:
+        print("✅ 功能点 tag 与业务梳理表范围一致（或未找到梳理文件供对照）。")
+
+    if vn_warns:
+        print(f"### 🗑️ 非功能性需求章节冗余说明框（{len(vn_warns)} 处，§4.21 冗余框）")
+        for w in vn_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：删除 §五~§九 中的操作指引型 warn/note 框，"
+              "PRD 只保留需求说明，不写执行规范。")
+        print()
+    else:
+        print("✅ 非功能性需求章节无冗余说明框。")
+
+    if sl_warns:
+        print(f"### 🚫 PRD 出现本期范围外的功能/概念（{len(sl_warns)} 处，§4.22 范围泄漏）")
+        for w in sl_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：删除所有不在本期需求范围内的功能/概念引用，"
+              "或先更新范围表再加入功能说明。")
+        print()
+    else:
+        print("✅ 未发现本期范围外的功能/概念泄漏。")
 
     # ---------- 结论 ----------
     print()
