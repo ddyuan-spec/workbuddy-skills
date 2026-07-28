@@ -283,15 +283,17 @@ agent_created: true
   3. 超长纯文本 td（>40 字）拆行或用小字 span 缩减
 - **踩坑**：优惠券 PRD §3.1 范围映射表 HTML 列数 6=6 完全正确，loop 报「✅ 全部表格结构正常」，但截图明显错位——根因是 `table{width:100%}` 无 `table-layout:fixed`，td 内 `—<br><span>不开放（商家端仅管自身券，无需全平台看板）</span>` 把商家端后台列撑爆。
 
-### 4.12 多列表格列宽挤压检测（TABLE_COL_SQUEEZE）🔴
-- **问题本质**：`table-layout:fixed` + 多列（≥5）表格 + 无 `<colgroup>` 显式列宽 = 浏览器均分列宽 → 首列长文本（如"优惠券管理（列表/新建/详情）"）+ 单元格内 `<br>` 标签 = **所有内容视觉上挤到一列**。结构层完全正确（thead/tbody/tr/td 列数匹配），但渲染层崩塌。
-- **检测规则**（`scan_table_quality` 新增第 11 项）：
-  - 表格 ≥ 5 列 且 全局 CSS 含 `table-layout:fixed` 且 该表无 `<colgroup>` → 🔴 必须修
+### 4.12 矩阵表必须用 SVG 绘制（MATRIX_TABLE_MUST_BE_SVG）🔴
+- **问题本质**：PRD 中的**交叉矩阵表**（如「端口×模块」「状态×条件」「角色×权限」）单元格以 ✓/—/已有功能 等短标记为主。经验证：HTML `<table>` 在 **GitHub Pages / Jekyll** 渲染管道下会发生**列错位（所有数据列内容挤到一列）**，即使加 `<colgroup>` 显式列宽 + 改 `table-layout:auto` 也**无法根治**——属平台级渲染差异，CSS 调整无效。
+- **判定规则**（`scan_table_quality` 第 11 项，`scan_matrix_table_must_be_svg`）：
+  - 表格 **列数 ≥ 4** 且 **短标记单元格占比 ≥ 50%**（短标记 = 文本≤8字且含 ✓/—/●/已有功能 等符号）→ 🔴 矩阵表，必须用 SVG 重绘
+  - **不误伤**：状态明细表 / 字段表（单元格以长文本为主，`—` 仅作空占位）→ 占比 < 50% → **不告警**，HTML `<table>` 渲染正常
 - **修复方式**（Auto-Fix，直接改不确认）：
-  1. **首选**：给该表加 `<colgroup><col style="width:X%">…</colgroup>`，首列分配更宽比例（如 22%），其余列均分剩余
-  2. **备选**：将该表的 `table-layout` 覆盖为 `auto`（内联 style 或 scoped class）
-  3. 同时缩短单元格内长注释文字（font-size 缩到 10px）
-- **踩坑**：优惠券 PRD v1.0.10 的 §3.1 范围映射表（6 列：功能模块/平台端后台/商家端后台/App/小程序/独立H5），全局 `table-layout:fixed` 导致每列仅 ~16.7%，首列 "优惠券管理（列表/新建/详情）" 加上各 cell 的 `<br><span>新建无店铺选择</span>` 直接把整表挤成一列堆叠。v1.0.11 修复：加 `<colgroup>` 7 列显式宽度 + 全局改回 `table-layout:auto`。
+  1. **改用 `<svg>` 重绘矩阵表**（参照 PRD §3.2 流程图 SVG 方案）：每个单元格 = 独立定位的 `<rect>`（背景色区分 ✓绿/—灰/已有功能红）+ `<text>`（精确居中坐标），**任意环境渲染一致**，不受浏览器 table 引擎影响。
+  2. SVG 布局模板：`viewBox="0 0 W H"`，列 x 坐标数组 + 行 y 坐标数组，先画单元格填充 rect → 表头背景 → 网格线 → 文字（标记居中 `<text text-anchor="middle">`，长文本左对齐 `<text text-anchor="start">`）。
+- **踩坑**：
+  - 优惠券 PRD V1.0.10 §3.1 范围映射表（6 列短标记）在 GitHub Pages 上**全部挤到一列**；V1.0.11 试过 `colgroup` + `table-layout:auto`，**用户验证仍错位**；V1.0.15 最终改为 SVG 重绘，彻底解决。
+  - 原 §4.12（TABLE_COL_SQUEEZE，检测 colgroup 存在性）是**错误路线**——colgroup 存在也错位，已废弃，改为本规则（直接禁止矩阵表用 HTML `<table>`）。
 
 ### 4.13 流程图防篡改保护（FLOW_DIAGRAM_TAMPER_PROOF）🔴
 - **核心规则**：PRD §三 业务流程图**必须原样引用/嵌入已确认的权威流程图文件**（如 `coupon-flow.html` / `需求梳理图集.html`），**禁止 AI 自行简化、重绘、修改、省略节点或泳道**。
