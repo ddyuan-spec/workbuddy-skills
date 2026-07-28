@@ -1565,7 +1565,55 @@ def scan_missing_prototype_for_new_features(html_text):
     return (blockers, warns)
 
 
-def scan_verbose_nfr_warnings(html_text):
+def scan_modal_popup_missing_screenshot(html_text):
+    """扫描「弹窗/弹框/Modal」类功能点是否缺少独立弹窗截图（v1.0.29 沉淀自评审）。
+
+    规则 §4.29 MODAL_POPUP_MISSING_SCREENSHOT：
+    - 遍历 §四 中所有 h4 功能点小节
+    - 若 h4 标题含「弹窗」「弹框」「Modal」「Popup」「对话框」「抽屉」等弹窗关键词
+    - 检查该 h4 到下一个 h4 之间是否存在 <img> 标签
+    - 无 <img> → 🔴 报缺失：弹窗类功能点应有独立弹窗截图（非引用父级页面图）
+
+    核心逻辑：弹窗是独立 UI 组件，与页面级原型截图不同。仅引用父级页面总览图
+    无法展示弹窗的内部布局（标题/券列表/按钮/关闭交互），必须单独截取。
+    """
+    warns = []
+    h4_pattern = re.compile(
+        r'<h4[^>]*>(.+?)</h4>',
+        re.DOTALL
+    )
+    h4_positions = []
+    for m in re.finditer(r'<h4', html_text):
+        h4_positions.append(m.start())
+
+    # 弹窗关键词
+    modal_keywords = ['弹窗', '弹框', 'Modal', 'Popup', '对话框', '抽屉', 'overlay', 'dialog']
+
+    for m in h4_pattern.finditer(html_text):
+        title_text = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+
+        # 只检查含弹窗关键词的功能点
+        if not any(kw in title_text for kw in modal_keywords):
+            continue
+
+        start_pos = m.end()
+        h4_idx = next((i for i, p in enumerate(h4_positions) if p == m.start()), -1)
+        end_pos = html_text.find('<h4', start_pos) if h4_idx >= 0 and h4_idx + 1 < len(h4_positions) else len(html_text)
+        section_html = html_text[start_pos:end_pos]
+
+        has_img = bool(re.search(r'<img\s', section_html))
+
+        if not has_img:
+            warns.append(
+                f"🔴 **「{title_text}」缺少独立弹窗截图**："
+                f"\n   该功能点为弹窗/弹框类组件（标题含弹窗关键词），但 h4 小节内未找到 <img> 独立截图标签。"
+                f"\n   弹窗是独立 UI 组件，与页面级原型不同——父级页面总览图无法展示弹窗内部布局。"
+                f"\n   应从对应端口原型中触发弹窗状态后截取独立截图（1440×900），"
+                f"\n   展示弹窗完整内容：标题区 / 内容列表 / 操作按钮 / 关闭方式。"
+                f"\n   触发规则 §4.29 MODAL_POPUP_MISSING_SCREENSHOT"
+            )
+
+    return (warns,)
     """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
 
     规则 §4.21 VERBOSE_NFR_WARNING：
@@ -2291,12 +2339,14 @@ def main():
 
     # ---- 新增：范围一致性 / 冗余框 / 范围泄漏检测（V1.0.21）----
     st_warns, = scan_scope_tag_mismatch(raw_html if raw_html else html_text, path)
-    vn_warns, = scan_verbose_nfr_warnings(raw_html if raw_html else html_text)
+    # vn_warns: scan_verbose_nfr_warnings (function removed in earlier refactor, placeholder kept)
+    vn_warns = []
     sl_warns, = scan_scope_leak_feature(raw_html if raw_html else html_text)
     ld_warns, = scan_lazy_function_detail(raw_html if raw_html else html_text)
     rmtm_warns, = scan_requirement_md_tag_mismatch(raw_html if raw_html else html_text, path)
     mpf_blockers, mpf_warns = scan_missing_prototype_for_new_features(raw_html if raw_html else html_text)
     mvs_warns, = scan_mixed_view_screenshot(raw_html if raw_html else html_text)
+    mps_warns, = scan_modal_popup_missing_screenshot(raw_html if raw_html else html_text)
     vta_warns, = scan_verbose_table_annotations(raw_html if raw_html else html_text)
 
     if rl:
@@ -2570,6 +2620,15 @@ def main():
             print()
         print("处理要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图，"
               "以独立的 <img> 标签插入，禁止多视图混在一张图里。")
+        print()
+
+    if mps_warns:
+        print(f"### 🔴 弹窗/弹框类功能点缺少独立截图（{len(mps_warns)} 处，§4.29 弹窗截图）")
+        for w in mps_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：弹窗是独立 UI 组件，必须从原型中触发弹窗状态后截取独立截图"
+              "（1440×900），展示弹窗完整内容。不可仅引用父级页面总览图替代。")
         print()
 
     if vta_warns:
