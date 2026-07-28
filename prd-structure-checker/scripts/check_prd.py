@@ -836,6 +836,64 @@ def scan_resolved_warn_boxes(html_text):
     return warns, auto_fixes
 
 
+def scan_prototype_link_instead_of_image(html_text):
+    """扫描「原型示意」是否为链接而非截图（v1.0.14 沉淀自评审）。
+
+    规则：PRD §四 功能需求详情中，每个端/模块的「原型示意」
+    必须嵌入 <img> 截图，不得使用 <a href> 文字链接跳转。
+    链接形式 = 读者需要额外点击才能看到原型 → 不符合 PRD 自包含原则。
+
+    返回 (warns, ) —— 单元组（与其它 scan 函数签名一致）。
+    """
+    warns = []
+
+    # 匹配"原型示意"段落：可能格式为：
+    #   <p>原型示意：<a href="...">xxx.html</a></p>
+    #   <p>原型示意：<a ... target="_blank">xxx</a></p>
+    #   原型示意：<a href="...">...</a>
+    proto_patterns = [
+        # 格式1: <p>原型示意：</p><a href>
+        (r'<p>\s*原型示意\s*[:：]\s*</p>\s*<a\s+[^>]*href=',
+         '原型示意后紧跟<a>链接'),
+        # 格式2: <p>原型示意：<a href="...">
+        (r'<p>\s*原型示意\s*[:：]\s*<a\s+[^>]*href=',
+         '原型示意内嵌<a>链接'),
+        # 格式3: 原型示意.*<a.*href（宽松匹配）
+        (r'原型示意[^<]{0,30}<a\s+[^>]*href=',
+         '原型示意附近出现<a>链接'),
+    ]
+
+    for pat, label in proto_patterns:
+        matches = list(re.finditer(pat, html_text, re.IGNORECASE))
+        for m in matches:
+            # 确认同一上下文中没有 <img> 标签（允许的例外）
+            context_start = max(0, m.start() - 50)
+            context_end = min(len(html_text), m.end() + 300)
+            context = html_text[context_start:context_end]
+
+            has_img = bool(re.search(r'<img\b', context, re.IGNORECASE))
+
+            if not has_img:
+                # 提取链接目标作为标识
+                href_match = re.search(r'href=["\']([^"\']+)["\']',
+                                       html_text[m.start():m.end()+200],
+                                       re.IGNORECASE)
+                link_target = href_match.group(1) if href_match else '(未知)'
+                if len(link_target) > 60:
+                    link_target = link_target[:57] + '...'
+
+                warns.append(
+                    f"🔴 **原型示意应为截图**（{label}）："
+                    f"检测到 `<a href=\"{link_target}\">` 文字链接——"
+                    f"PRD 中「原型示意」必须嵌入 <img> 截图图片，"
+                    f"不应使用文字链接让读者额外点击跳转。"
+                    f"\n   触发规则 §4.15 PROTOTYPE_LINK_NOT_IMAGE："
+                    f"将 `<a href>` 替换为 `<img src=\"原型截图/xxx.png\">` "
+                    f"(用 Edge headless 或 Playwright 对原型 HTML 截图)。")
+
+    return (warns,)
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -1162,6 +1220,7 @@ def main():
     st_warns, st_infos = scan_scope_tagging(text)
     ph_warns, ph_infos = scan_pending_hygiene(text, raw_html if raw_html else html_text)
     rw_warns, rw_fixes = scan_resolved_warn_boxes(raw_html if raw_html else html_text)
+    pl_warns, = scan_prototype_link_instead_of_image(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -1289,6 +1348,17 @@ def main():
         print()
     else:
         print("✅ 无冗余警告框（所有 ⚠️ 框均含未闭环待确认项或合法说明）。")
+
+    if pl_warns:
+        print(f"### 🖼️ 原型示意应为截图（{len(pl_warns)} 处，链接→截图）")
+        for w in pl_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：将「原型示意：<a href>」替换为"
+              "「<img src=\"原型截图/xxx.png\">」（Edge headless 截图）。")
+        print()
+    else:
+        print("✅ 所有「原型示意」均已嵌入截图（非文字链接）。")
 
     # ---------- 结论 ----------
     print()
