@@ -1150,15 +1150,13 @@ def _read_png_dimensions(filepath):
 
 
 def scan_prototype_screen_ratio(html_text, prd_path=None):
-    """扫描原型截图是否使用了正确的屏幕尺寸比例（v1.0.20 沉淀自评审）。
+    """扫描原型截图是否使用统一的 PC 端尺寸（v1.0.23 沉淀自评审）。
 
-    规则 §4.19 PROTOTYPE_SCREEN_RATIO：
-    - **PC 端后台**原型截图（platform / merchant）应使用桌面分辨率：
-      宽 ≥1000px，推荐 1440×900。若宽度 <800px → 🔴 移动端比例误用于 PC 端
-    - **移动端 C 端**原型截图（app / mini-h5 / mobile）应使用手机分辨率：
-      宽 ≤500px，推荐 390×844。若宽度 >800px → 🔴 PC 端比例误用于移动端
+    规则 §4.19 PROTOTYPE_SCREEN_RATIO（V1.0.23 修订）：
+    - **所有原型截图统一使用 PC 端尺寸 1440×900**，不再区分终端类型
+    - 非 1440×900 → 🟡 提示（允许偏差，但推荐统一）
 
-    判定依据：从 <img src="..."> 的文件名推断终端类型。
+    判定依据：读 <img src="..."> 对应 PNG 文件的 IHDR chunk。
     """
     warns = []
     if not prd_path:
@@ -1166,20 +1164,8 @@ def scan_prototype_screen_ratio(html_text, prd_path=None):
 
     prd_dir = os.path.dirname(os.path.abspath(prd_path))
 
-    # 终端类型判定：文件名关键词 → 预期宽度范围
-    pc_keywords = ['platform', 'merchant', 'admin', 'backend', 'pc', 'desktop']
-    mobile_keywords = ['app', 'mini', 'mobile', 'h5', 'phone', 'ios', 'android']
-
-    for m in re.finditer(r'<img\s[^>]*src=["\']([^"\']+)["\']', html_text, re.IGNORECASE):
+    for m in re.finditer(r'<img\s[^>]*src=["\']([^"\']+\.png)["\']', html_text, re.IGNORECASE):
         src = m.group(1)
-        src_lower = src.lower()
-
-        # 判定预期终端类型
-        is_pc = any(kw in src_lower for kw in pc_keywords)
-        is_mobile = any(kw in src_lower for kw in mobile_keywords)
-        if not is_pc and not is_mobile:
-            continue
-
         abs_path = os.path.join(prd_dir, src)
         abs_path = os.path.normpath(abs_path)
         w, h = _read_png_dimensions(abs_path)
@@ -1187,17 +1173,12 @@ def scan_prototype_screen_ratio(html_text, prd_path=None):
         if w is None:
             continue
 
-        if is_pc and w < 800:
+        # 统一标准：1440x900
+        if w != 1440 or h != 900:
             warns.append(
-                f"🔴 **PC 端后台原型截图使用了移动端比例**（src=\"{src}\"）："
-                f"\n   实际 {w}×{h} px（宽度 <800px），但文件名含 PC 端关键词。"
-                f"\n   应使用桌面分辨率重新截图（推荐 1440×900 或 1920×1080）。"
-                f"\n   触发规则 §4.19 PROTOTYPE_SCREEN_RATIO")
-        elif is_mobile and w > 800:
-            warns.append(
-                f"🔴 **移动端 C 端原型截图使用了 PC 桌面比例**（src=\"{src}\"）："
-                f"\n   实际 {w}×{h} px（宽度 >800px），但文件名含移动端关键词。"
-                f"\n   应使用手机分辨率重新截图（推荐 390×844 或 375×812）。"
+                f"🟡 **原型截图尺寸非标准 PC 尺寸**（src=\"{src}\"）："
+                f"\n   实际 {w}×{h} px，推荐统一使用 **1440×900**。"
+                f"\n   修复命令：msedge --headless --screenshot={src} --window-size=1440,900 原型.html"
                 f"\n   触发规则 §4.19 PROTOTYPE_SCREEN_RATIO")
 
     return (warns,)
@@ -2043,12 +2024,12 @@ def main():
         print("✅ 所有「已有-沿用」功能点均只写标准文案，无冗余赘述。")
 
     if sr_warns:
-        print(f"### 🖥️ 原型截图屏幕比例检查（{len(sr_warns)} 处，§4.19 屏幕比例）")
+        print(f"### 🖥️ 原型截图尺寸检查（{len(sr_warns)} 处，§4.19 统一PC尺寸）")
         for w in sr_warns:
             print(f"- {w}")
             print()
-        print("处理要求：PC 端后台截图用桌面分辨率（1440×900），"
-              "移动端 C 端截图用手机分辨率（390×844）。")
+        print("处理要求：所有原型截图统一使用 PC 端尺寸 1440×900，"
+              "不再区分终端类型。")
         print()
     else:
         print("✅ 所有原型截图屏幕比例正确（PC端≥1000px / 移动端≤500px）。")
