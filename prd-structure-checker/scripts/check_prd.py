@@ -1554,6 +1554,85 @@ def scan_scope_leak_feature(html_text, scope_keywords=None):
     return (warns,)
 
 
+def scan_mixed_view_screenshot(html_text):
+    """扫描原型截图是否将多个视图（列表/新建/编辑/详情/弹窗）混在一张图里（v1.0.26 沉淀自评审）。
+
+    规则 §4.26 MIXED_VIEW_SCREENSHOT：
+    - 一个功能点小节（h4）如果包含多个视图类型（如「P2 列表 + D3 新建」、
+      「列表 + 详情页」、「列表 + 弹窗」），每个视图必须分别有独立的 <img>
+    - 检测方式：
+      a) h4 标题含「+」或「、」等分隔符，暗示多页面 → 该节内 <img> 数量应 ≥ 2
+      b) h4 节内有多个 <p><b>视图名</b> 子标题 → 每个 <p><b> 后应有独立 <img>
+    - 若多视图只配了 1 张截图 → 🔴 报「多视图混在一张截图，需拆分」
+
+    典型反面案例：优惠券 PRD V1.0.25 的 4.1.4 「P2 发券活动管理列表 + D3 发券活动」
+    只放了 1 张 coupon-d3-send-edit.png，同时包含上半部分 P2 列表和下半部分 D3 表单。
+    V1.0.26 拆为 coupon-p2-send-list.png + coupon-d3-send-edit.png 两张独立截图。
+    """
+    warns = []
+
+    # 匹配 h4 功能点小节
+    h4_pattern = re.compile(
+        r'<h4[^>]*>(.+?)<span\s+class="tag[^"]*"[^>]*>(.+?)</span></h4>',
+        re.DOTALL)
+    img_pattern = re.compile(r'<img\s[^>]*src=["\']([^"\']+)["\']', re.IGNORECASE)
+    # 匹配 <p><b>视图名</b> 形式的子视图标题
+    subview_pattern = re.compile(r'<p><b>([^<]+)</b></p>\s*<p><img', re.DOTALL)
+
+    for m in h4_pattern.finditer(html_text):
+        title = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+        tag = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+
+        # 只检查本期新增/改动的功能点
+        if '新增' not in tag and '改动' not in tag:
+            continue
+
+        # 获取该 h4 到下一个 h4/h3/h2 之间的内容
+        start = m.end()
+        next_heading = re.search(r'<h[234][\s>]', html_text[start:])
+        if not next_heading:
+            continue
+        section_html = html_text[start:start + next_heading.start()]
+
+        # 统计该节内的 <img> 数量
+        imgs = img_pattern.findall(section_html)
+        img_count = len(imgs)
+
+        # 检测方式 a): 标题含多视图分隔符
+        multi_indicators = ['+', '／', '/', '、', '＋']
+        is_multi_title = any(ind in title for ind in multi_indicators)
+
+        # 检测方式 b): 节内多个 <p><b>子视图名</b> 子标题
+        subview_titles = re.findall(r'<p><b>([^<]+)</b></p>', section_html)
+        # 过滤掉非视图类标题（如表单字段表、按钮说明等）
+        view_keywords = ['列表', '详情', '新建', '编辑', '弹窗', '表单', '页面',
+                         '原型', '截图', '效果', '示意', 'P\\d', 'D\\d']
+        view_subviews = [sv for sv in subview_titles
+                         if any(re.search(vk, sv) for vk in view_keywords)]
+        subview_count = len(view_subviews)
+
+        # 判定：多视图标题但只有 1 张图 OR 多个子视图标题但图片数不足
+        if is_multi_title and img_count < 2:
+            warns.append(
+                f"🔴 **多视图混在一张截图**（h4: 「{title}」）："
+                f"\n   标题暗示包含多个页面/视图（含 '+' 或 '／' 等分隔符），"
+                f"但该节仅有 {img_count} 张 <img>。"
+                f"\n   要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图。"
+                f"\n   当前图片：{', '.join(imgs) if imgs else '无'}"
+                f"\n   触发规则 §4.26 MIXED_VIEW_SCREENSHOT")
+        elif subview_count >= 2 and img_count < subview_count:
+            missing_views = view_subviews[img_count:] if img_count > 0 else view_subviews
+            warns.append(
+                f"🔴 **部分视图缺少独立截图**（h4: 「{title}」）："
+                f"\n   节内识别到 {subview_count} 个子视图（{', '.join(view_subviews)}），"
+                f"但仅有 {img_count} 张 <img>。"
+                f"\n   缺少截图的视图：{', '.join(missing_views)}"
+                f"\n   要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图。"
+                f"\n   触发规则 §4.26 MIXED_VIEW_SCREENSHOT")
+
+    return (warns,)
+
+
 def scan_lazy_function_detail(html_text):
     """扫描 §四 功能需求详情中「本期新增 / 本期改动」功能点是否偷懒（未按模板逐页面逐功能点拆解）。
 
@@ -2047,6 +2126,7 @@ def main():
     ld_warns, = scan_lazy_function_detail(raw_html if raw_html else html_text)
     rmtm_warns, = scan_requirement_md_tag_mismatch(raw_html if raw_html else html_text, path)
     mpf_warns, = scan_missing_prototype_for_new_features(raw_html if raw_html else html_text)
+    mvs_warns, = scan_mixed_view_screenshot(raw_html if raw_html else html_text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -2299,6 +2379,15 @@ def main():
         print()
     else:
         pass
+
+    if mvs_warns:
+        print(f"### 🖼️ 多视图截图未拆分（{len(mvs_warns)} 处，§4.26 混合截图）")
+        for w in mvs_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：每个视图（列表/新建/编辑/详情/弹窗）必须分别截取独立截图，"
+              "以独立的 <img> 标签插入，禁止多视图混在一张图里。")
+        print()
 
     # ---------- 结论 ----------
     print()
