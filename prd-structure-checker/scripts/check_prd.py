@@ -1082,22 +1082,39 @@ def scan_table_quality(html_text):
                 f"[{tlabel}] {len(long_text_cells)} 个 <td> 纯文本超长(>40字)"
                 f"（{long_text_cells[0]}），建议折行或精简文案。")
 
-        # 11) 🔴 多列表格（≥5列）缺 <colgroup> 显式列宽 + 全局 table-layout:fixed
-        #     → 必定导致列宽均分、内容挤到一列（v1.0.11 沉淀自评审）
-        if ref_cols >= 5:
-            table_html_segment = _extract_table_Nth(html_text, idx)
-            has_colgroup = bool(re.search(r'<colgroup[^>]*>.*?</colgroup>',
-                                          table_html_segment, re.DOTALL))
-            global_fixed = bool(re.search(r'table\s*\{[^}]*table-layout\s*:\s*fixed',
-                                          html_text))
-            if global_fixed and not has_colgroup:
-                struct_warns.append(
-                    f"[{tlabel}] 🔴 **多列挤压风险**：表格有 {ref_cols} 列，"
-                    f"全局 CSS 设了 `table-layout:fixed` 但本表无 `<colgroup>` "
-                    f"显式列宽→浏览器将均分列宽，首列长文本+单元格内<br>标签"
-                    f"会导致内容全部挤到一列！"
-                    f'\n   修复：① 本表加 `<colgroup><col style=\'width:X%\'>…</colgroup>` '
-                    f"给每列分配合理宽度；或 ② 本表内联覆盖为 `table-layout:auto`。")
+        # 11) 🔴 矩阵表（≥4列 + 短标记单元格占比≥50%）必须用 SVG 绘制（v1.0.15）
+        #     经验证：HTML <table> 在 GitHub Pages / Jekyll 渲染管道下会发生
+        #     列错位（数据列全部挤到一列），colgroup + table-layout:auto 均无法根治
+        #     ——属平台级渲染差异，CSS 调整无效。凡「端口×模块 / 状态×条件 /
+        #     角色×权限」等交叉矩阵表（单元格以 ✓/—/已有功能 等短标记为主），
+        #     一律用 <svg> 重绘（每个单元格 = 独立定位的 <rect> + <text>）。
+        #     注意：状态明细表/字段表（单元格以长文本为主，— 仅作空占位）不算
+        #     矩阵表，HTML <table> 渲染正常，不触发本条。
+        matrix_markers = ['✓', '—', '●', '○', '✕', '✔', '已有功能',
+                          '待定', '可选', '不支持', '部分支持']
+        marker_cells = 0
+        total_cells = 0
+        for r in t['body_rows']:
+            for c in r['cells']:
+                txt = c.get('text', '').strip()
+                if not txt:
+                    continue
+                total_cells += 1
+                # 短标记单元格：文本≤8字且含标记符号（— 仅作空占位也计入）
+                if len(txt) <= 8 and any(m in txt for m in matrix_markers):
+                    marker_cells += 1
+        marker_ratio = marker_cells / total_cells if total_cells else 0
+        if ref_cols >= 4 and marker_ratio >= 0.5:
+            struct_warns.append(
+                f"[{tlabel}] 🔴 **矩阵表必须用 SVG 绘制**：本表 {ref_cols} 列，"
+                f"短标记单元格占比约 {marker_ratio*100:.0f}%（✓/—/已有功能 等），"
+                f"属交叉矩阵表。"
+                f"经验证 HTML <table> 在 GitHub Pages/Jekyll 渲染下会发生列错位"
+                f"（数据列全部挤到一列），colgroup + table-layout:auto 均无法根治。"
+                f'\n   修复：改用 <svg> 重绘矩阵表（参照 PRD §3.2 流程图 SVG 方案——'
+                f'每个单元格 = 独立定位的 <rect> + <text>，任意环境渲染一致）。'
+                f'\n   规则：凡「端口×模块 / 状态×条件 / 角色×权限」类矩阵表，'
+                f'一律 SVG 绘制，禁止用 HTML <table>。')
 
     return struct_warns, style_warns, len(parser.tables)
 
