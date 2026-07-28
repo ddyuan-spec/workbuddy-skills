@@ -478,6 +478,75 @@ def scan_state_machine(plain_text, html_text):
                     f"与主实体状态机保持一致颗粒度。")
 
     return warns, infos
+
+
+# ---------------------------------------------------------------------------
+# 阶段4 扩展：功能范围标注扫描（已有 vs 新增/改动）
+# 沉淀自优惠券 PRD 评审：平台端已有功能（新增/编辑/下架/删除）被全量展开，
+# 用户要求「已有功能不赘述，仅写一句沿用现有功能；只写本期新增/改动」。
+# ---------------------------------------------------------------------------
+def scan_scope_tagging(plain_text):
+    """扫描 §四 功能需求详情下每个功能点（h3/h4 标题）是否标注了范围标签。
+
+    检测项分两级：
+      🔴 必须修：功能点标题所在小节附近无任何范围标注关键词
+                （已有 / 沿用现有功能 / 本期新增 / 新增 / 改动 / 沿用）
+      🟡 建议查：标注「沿用现有功能」却仍展开大段字段表/逻辑（疑似冗余）
+
+    返回 (warns, infos)。
+    """
+    import re as _re
+    # 仅当存在「四、功能需求」章节才激活
+    if not _re.search(r'四[、.、]\s*功能需求', plain_text):
+        return [], []
+
+    SCOPE_KW = ['已有', '沿用现有功能', '沿用', '本期新增', '本期改动',
+                '新增', '改动', '已存在', '存量']
+
+    # 提取 §四 章节正文（从「四、功能需求」到「五、」之前）
+    m_start = _re.search(r'四[、.、]\s*功能需求', plain_text)
+    m_end = _re.search(r'五[、.、]\s*非功能性|五[、.、]\s*', plain_text)
+    sec_start = m_start.start() if m_start else 0
+    sec_end = m_end.start() if m_end else len(plain_text)
+    section = plain_text[sec_start:sec_end]
+
+    # 切分功能点：以 h3/h4 标题（「N.N」编号）为界
+    # 匹配形如 4.1 / 4.1.1 / 4.2 的标题行
+    point_pattern = _re.compile(r'\n\s*(\d+\.\d+(?:\.\d+)?)\s*([^\n]+)')
+    points = list(point_pattern.finditer(section))
+
+    warns = []
+    infos = []
+
+    for i, pm in enumerate(points):
+        title = pm.group(2).strip()
+        # 当前功能点内容范围：从本标题到下一个标题
+        start = pm.end()
+        end = points[i + 1].start() if i + 1 < len(points) else sec_end
+        block = section[start:end]
+
+        # 跳过纯编号导航（如 "4.1 平台端后台" 这种大节也检查，但允许其下属小节点标注）
+        has_scope = any(kw in block[:200] or kw in title for kw in SCOPE_KW)
+        if not has_scope:
+            warns.append(
+                f"🔴 **功能点「{pm.group(1)} {title}」缺少范围标注**："
+                f"未标明「已有-沿用 / 本期新增 / 本期改动」。"
+                f"请按需求梳理范围补标——已有功能仅写一句「沿用现有功能」，"
+                f"本期新增/改动才详写。")
+        else:
+            # 标注了「沿用」但内容过长（> 400 字且无表格截断）→ 疑似冗余
+            if any(kw in block[:200] for kw in ['已有', '沿用现有功能', '沿用', '已存在', '存量']):
+                # 粗略判断：沿用块里是否含多行 <tr> 字段表
+                tr_count = block.count('<tr')
+                if tr_count >= 3:
+                    infos.append(
+                        f"💡 功能点「{pm.group(1)} {title}」标注为已有/沿用，"
+                        f"但仍展开 {tr_count} 行表格，疑似冗余——"
+                        f"已有功能建议压缩为一句「沿用现有功能，详见原型」。")
+
+    return warns, infos
+
+
 def scan_table_quality(html_text):
     """扫描 HTML 中所有 <table> 的结构/排版异常。
 
@@ -724,6 +793,7 @@ def main():
     rd_hits = scan_redundant_declarations(text)
     fd_warns, fd_infos = scan_flow_diagram_consistency(raw_html if raw_html else html_text, text)
     sm_warns, sm_infos = scan_state_machine(text, raw_html if raw_html else html_text)
+    st_warns, st_infos = scan_scope_tagging(text)
 
     if rl:
         print(f"### 🚫 红线词告警（{len(rl)} 处）")
@@ -812,6 +882,20 @@ def main():
     else:
         pass  # 无状态机内容，静默跳过
 
+    # 功能范围标注扫描
+    if st_warns or st_infos:
+        print(f"### 🏷️ 功能范围标注（{len(st_warns)} 告警 / {len(st_infos)} 提示）")
+        for w in st_warns:
+            print(f"- ⚠️ {w}")
+        for i in st_infos:
+            print(f"- 💡 {i}")
+        print()
+        print("处理要求：§四 每个功能点须标注 已有-沿用 / 本期新增 / 本期改动；"
+              "已有功能仅写一句「沿用现有功能，详见原型」，不展开细节。")
+        print()
+    else:
+        print("✅ 全部功能点已标注范围（已有/新增/改动）。")
+
     # ---------- 结论 ----------
     print()
     print("## 结论")
@@ -840,12 +924,12 @@ def main():
     if uncertain_hits:
         print(f"⚠️ **存在 {len(uncertain_hits)} 处待确认项**：须向用户澄清或保留「⚠️ 待确认 @干系人」占位，"
               "不得臆测填充。")
-    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns) + len(sm_warns)
+    red_total = len(rl) + len(ut) + len(tv) + len(tq_struct) + len(rd_hits) + len(fd_warns) + len(sm_warns) + len(st_warns)
     if red_total:
         print(f"⚠️ **阶段4 发现 {red_total} 处风险**（红线词 {len(rl)} / 待确认悬空 {len(ut)}"
               f" / 埋点规范 {len(tv)} / 表格结构异常 {len(tq_struct)}"
               f" / 冗余声明 {len(rd_hits)} / 流程图一致性 {len(fd_warns)}"
-              f" / 状态机完整性 {len(sm_warns)}）："
+              f" / 状态机完整性 {len(sm_warns)} / 功能范围标注 {len(st_warns)}）："
               "须逐项确认或修正后再定稿。")
     print()
 
