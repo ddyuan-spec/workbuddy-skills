@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-html_to_docx.py  v2.1  ——  高保真 HTML -> Word(.docx) 转换器
+html_to_docx.py  v2.2  ——  高保真 HTML -> Word(.docx) 转换器
 v2.1 修复（2026-07-29）：
   - 修复中文乱码：每个 run 显式设置 w:eastAsia=Microsoft YaHei + post-process 补漏
   - 图片嵌入沿用 v1 已验证路径（paragraph.add_picture），修复 heading 内 img 丢失问题
   - 增加 post-process 验证与诊断输出
+v2.2 修复（2026-07-29）：
+  - 修复 HTML 注释泄漏为正文（bs4.Comment 是 NavigableString 子类，导致 <!-- --> 内容被当文本输出，
+    表现为"标题重复"：注释中的章节名 + 正式 hN 标题同时出现）
+  - 所有遍历 child 的节点（add_block / add_heading / unwrap_heading_blocks）统一跳过 Comment
 用法：python html_to_docx.py <input.html> <output.docx> [--edge <msedge.exe>]
 """
 import sys, os, re, io, subprocess, argparse
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag, Comment
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor, Emu
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -201,7 +205,7 @@ def unwrap_heading_blocks(soup):
     for h in soup.find_all(HEADING):
         # 逆序插入，保证文档顺序
         for b in reversed([c for c in h.children
-                           if not isinstance(c, NavigableString) and c.name in BLOCK]):
+                           if not isinstance(c, (NavigableString, Comment)) and c.name in BLOCK]):
             h.insert_after(b)
 
 # ── 标题处理（只取直接文本 + 直接行内子节点，块级已在预处理解包）──
@@ -212,6 +216,8 @@ def add_heading(parent, el, level):
     except Exception:
         pass
     for child in el.children:
+        if isinstance(child, Comment):
+            continue
         if isinstance(child, NavigableString):
             t = str(child)
             if t.strip():
@@ -232,6 +238,9 @@ def div_has_block(el):
 
 def add_block(parent, el):
     for child in el.children:
+        # 跳过 HTML 注释（bs4.Comment 是 NavigableString 子类，会被 isinstance 匹配）
+        if isinstance(child, Comment):
+            continue
         if isinstance(child, NavigableString):
             if str(child).strip():
                 p = parent.add_paragraph(); add_inline(p, child)
