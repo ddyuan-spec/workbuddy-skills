@@ -1769,6 +1769,26 @@ def scan_screenshot_view_mismatch(html_text, base_dir=None):
     return blockers
 
 
+def _collect_proto_files(base_dir):
+    """收集原型 HTML 文件：优先当前目录，同时向上一级目录查找（常见布局：
+    PRD/xxx-PRD.html 与 父目录/xxx-原型.html 同需求分块存放）。"""
+    search_dirs = [base_dir]
+    if base_dir:
+        parent = os.path.dirname(base_dir.rstrip('/\\'))
+        if parent and parent != base_dir and os.path.isdir(parent):
+            search_dirs.append(parent)
+    proto_files = []
+    for sd in search_dirs:
+        if not os.path.isdir(sd):
+            continue
+        for f in os.listdir(sd):
+            if f.endswith('.html') and '原型' in f and os.path.isfile(os.path.join(sd, f)):
+                fp = os.path.join(sd, f)
+                if fp not in proto_files:
+                    proto_files.append(fp)
+    return proto_files
+
+
 def scan_prototype_prd_sync(html_text, base_dir=None):
     """启发式检测「改了原型但 PRD 没同步」（v1.0.33 沉淀 §4.32 PROTOTYPE_PRD_SYNC）。
 
@@ -1784,9 +1804,7 @@ def scan_prototype_prd_sync(html_text, base_dir=None):
     if not base_dir or not os.path.isdir(base_dir):
         return warns
 
-    proto_files = [os.path.join(base_dir, f) for f in os.listdir(base_dir)
-                   if f.endswith('.html') and '原型' in f
-                   and os.path.isfile(os.path.join(base_dir, f))]
+    proto_files = _collect_proto_files(base_dir)
     if not proto_files:
         return warns
 
@@ -1819,6 +1837,188 @@ def scan_prototype_prd_sync(html_text, base_dir=None):
             f"请核对本轮原型改动是否已同步到 PRD 对应章节。"
             f"\n   （如本期确无 PRD，可忽略本提醒并在回复中说明）")
 
+    return warns
+
+
+def scan_prototype_function_coverage(html_text, base_dir=None):
+    """原型功能覆盖检查（v1.0.34 沉淀 §4.33 PROTOTYPE_FUNCTION_COVERAGE）。
+    用户明确要求：prdskill 须能检查「原型功能是否完全写进 PRD」，不要漏功能。
+
+    规则：提取同目录（及父目录）所有原型 HTML 的「业务交互功能特征」——
+      ① <button> 文本（如 下载明细 / 明细 / 确认赠送 / 确认扣除）
+      ② onclick="函数名(" 处理函数（如 downloadDetail / tagSearch / submitBatch）
+      ③ 弹窗/面板标题（modal|dialog|popup|overlay|panel 容器内的 h2~h4，
+         以及 class 含 title|label 的元素文本，如 标签筛选 / 目标用户列表）
+      ④ 表单字段标签 <label> 与 placeholder 输入提示
+    （刻意排除导航/Tab/侧边栏菜单项——属应用框架 chrome，非本期业务功能）
+    与 PRD §四 功能需求详情做覆盖比对：
+      原型里出现、但 PRD §四 完全找不到对应描述的「业务功能特征」 → 🟡 疑似漏写。
+    匹配采用「直接命中 / 去后缀 / 分隔符拆分 / 滑动 2~3 字 CJK 子串」多重容错，
+    降低术语表述差异造成的误报。这是 §4.32（表头列名同步）的互补增强：
+    §4.32 只比对表格列名，本函数覆盖「按钮/弹窗/表单/交互」等业务功能点。
+    """
+    warns = []
+    if not base_dir or not os.path.isdir(base_dir):
+        return warns
+
+    proto_files = _collect_proto_files(base_dir)
+    if not proto_files:
+        return warns
+
+    # 只取 PRD §四 功能需求详情章节做比对，降低背景/术语误报
+    m = re.search(r'四、功能需求详情[\s\S]*?(?=五、|$)', html_text)
+    prd_section = m.group(0) if m else html_text
+    prd_norm = re.sub(r'\s+', '', re.sub(r'<[^>]+>', ' ', prd_section))
+
+    # 纯 UI 动词白名单（不视为业务功能点，跳过）
+    UI_VERB = {
+        '确定', '取消', '关闭', '保存', '提交', '新增', '新建', '编辑', '删除',
+        '查询', '搜索', '重置', '导出', '导入', '刷新', '返回', '下一步', '上一步',
+        '确认', '完成', '查看', '详情', '更多', '操作', '添加', '移除', '清空',
+    }
+    # onclick 函数名 → 语义关键词映射（用于判断 PRD 是否描述了该函数对应的功能）
+    FUNC_SEMANTIC = {
+        'downloadDetail': ['下载明细', '明细'],
+        'showDetail': ['明细'],
+        'tagSearch': ['标签筛选', '搜索'],
+        'tagReset': ['标签筛选', '重置'],
+        'submitBatch': ['批量赠送', '批量扣除', '确认赠送', '确认扣除', '批量'],
+        'addUser': ['导入', '目标用户', '人员选择'],
+        'renderTarget': ['目标用户'],
+        'handleImport': ['导入', '人员选择'],
+        'openBatch': ['批量赠送', '批量扣除'],
+        'openGrant': ['批量赠送'],
+        'openDeduct': ['批量扣除'],
+        'confirmGrant': ['确认赠送'],
+        'confirmDeduct': ['确认扣除'],
+    }
+    # 中文尾部通用后缀（提取标签时剥除以提升匹配率）
+    CN_SUFFIX = ['列表', '区', '项', '按钮', '字段', '输入', '框', '面板',
+                 '弹窗', '标题', '名称', '区筛选', '筛选区']
+    # 应用框架导航/侧边栏 chrome（非本期业务功能，跳过避免噪声）
+    NAV_SHELL = {'内容管理', 'App管理', '运营配置', '用户体系', '数据分析',
+                 '系统设置', '任务中心', '首页', '概览', '工作台', '后台',
+                 'App', '切换到App预览', '内容', '用户', '运营', '系统',
+                 '数据', '我的', '消息', '设置'}
+
+    def clean(t):
+        return re.sub(r'\s+', '', re.sub(r'<[^>]+>', '', t)).strip()
+
+    def has_symbol(t):
+        # emoji / 箭头 / 几何图形 / 全角标点 / 装饰符号 / 广义标点（含 ‹ › … 等）
+        return bool(re.search(
+            r'[\u2000-\u206F\u2190-\u27BF\u2B00-\u2BFF\u25A0-\u25FF'
+            r'\u3000-\u303F\uFE30-\uFE4F\uFF00-\uFFEF'
+            r'\u1F000-\u1FAFF\u2600-\u26FF]', t))
+
+    def is_noise(t):
+        if has_symbol(t):
+            return True
+        if t in NAV_SHELL:
+            return True
+        return False
+
+    def strip_suffix(tok):
+        for s in CN_SUFFIX:
+            if tok.endswith(s) and len(tok) > len(s):
+                return tok[:-len(s)]
+        return tok
+
+    def matched(tok):
+        if tok in prd_norm:
+            return True
+        base = strip_suffix(tok)
+        if base and base in prd_norm:
+            return True
+        # 分隔符拆分（如 批量赠送/扣除 → 批量赠送 命中；手机号，多个… → 手机号 命中）
+        for seg in re.split(r'[/、·|\-：:，,（）()]', tok):
+            if len(seg) >= 2 and seg in prd_norm:
+                return True
+        # 滑动 2~3 字 CJK 连续子串命中（如 批量赠送虎力值 → 批量赠送 / 虎力值）
+        if len(tok) >= 3:
+            for L in (3, 2):
+                for i in range(len(tok) - L + 1):
+                    sub = tok[i:i + L]
+                    if re.search(r'[\u4e00-\u9fff]{' + str(L) + r'}', sub) and sub in prd_norm:
+                        return True
+        return False
+
+    tokens = []
+    for pf in proto_files:
+        try:
+            pt = open(pf, encoding='utf-8', errors='ignore').read()
+        except Exception:
+            continue
+        # ① 按钮文本（过滤 emoji/符号/导航 chrome）
+        for b in re.findall(r'<button[^>]*>(.*?)</button>', pt, re.DOTALL):
+            txt = clean(b)
+            if 1 <= len(txt) <= 12 and not is_noise(txt):
+                tokens.append(('cn', txt))
+        # ② onclick 函数名
+        for fn in re.findall(r'onclick=["\']([A-Za-z_][A-Za-z0-9_]*)\s*\(', pt):
+            if len(fn) >= 3:
+                tokens.append(('fn', fn))
+        # ③ 弹窗/面板标题（仅取 modal|dialog|popup|overlay|panel 容器内的 h2~h4）
+        for container in re.findall(
+                r'class="[^"]*(?:modal|dialog|popup|overlay|panel)[^"]*"[^>]*>([\s\S]*?)</(?:div|section)>', pt):
+            for h in re.findall(r'<h[234][^>]*>(.*?)</h[234]>', container, re.DOTALL):
+                txt = clean(h)
+                if 2 <= len(txt) <= 16 and not is_noise(txt):
+                    tokens.append(('cn', txt))
+        # ③b class 含 title/label 的短文本（如 标签筛选 / 目标用户列表）
+        for el in re.findall(
+                r'class="[^"]*(?:title|label)[^"]*"[^>]*>([\s\S]*?)</(?:span|div|p|label|td|th|a|b|strong)>', pt):
+            txt = clean(el)
+            if 2 <= len(txt) <= 16 and not is_noise(txt):
+                tokens.append(('cn', txt))
+        # ④ 表单字段标签 <label>
+        for lb in re.findall(r'<label[^>]*>(.*?)</label>', pt, re.DOTALL):
+            txt = clean(lb)
+            if 1 <= len(txt) <= 12 and not is_noise(txt):
+                tokens.append(('cn', txt))
+        # ④b placeholder 输入提示
+        for ph in re.findall(r'placeholder=["\']([^"\']{1,20})["\']', pt):
+            txt = clean(ph)
+            if 2 <= len(txt) <= 16 and not is_noise(txt):
+                tokens.append(('cn', txt))
+
+    # 去重保序
+    seen = set()
+    uniq = []
+    for kind, tok in tokens:
+        key = (kind, tok)
+        if key not in seen:
+            seen.add(key)
+            uniq.append((kind, tok))
+
+    missing = []
+    for kind, tok in uniq:
+        if kind == 'fn':
+            if tok.lower() in prd_norm.lower():
+                continue
+            mapped = FUNC_SEMANTIC.get(tok)
+            if mapped:
+                if any(kw in prd_norm for kw in mapped):
+                    continue
+                else:
+                    missing.append(f"{tok}（语义：{mapped}）")
+                    continue
+            # 无映射的英文名：无法推断语义，跳过避免噪声
+            continue
+        # 中文 token
+        if tok in UI_VERB:
+            continue
+        if matched(tok):
+            continue
+        missing.append(tok)
+
+    if missing:
+        warns.append(
+            f"🟡 **原型功能 PRD 未描述（疑似漏写，§4.33 功能覆盖）**："
+            f"原型交互元素 {missing} 在 PRD §四 功能需求详情中找不到对应描述。\n"
+            f"   按用户要求「原型功能必须完全写进 PRD，不要漏功能」，请核对这些按钮/弹窗/"
+            f"表单/区块是否已在 §四 逐功能点写明（功能说明/显示位置/逐步逻辑）。\n"
+            f"   （如为纯 UI 动词或本期确无对应需求，可忽略并说明）")
     return warns
 
 
@@ -3105,6 +3305,20 @@ def main():
         print("处理要求：确认本轮是否改了原型。若改了原型且存在定稿 PRD，"
               "必须将原型新增/改名的列、按钮、字段同步到 PRD 对应字段表/按钮表/功能逻辑；"
               "若本期无 PRD 可跳过，但需在回复中说明。")
+        print()
+
+    # ---------- 阶段5（扩展）：原型功能覆盖检测（§4.33）----------
+    cov_warns = scan_prototype_function_coverage(
+        raw_html if raw_html else html_text,
+        os.path.dirname(path) if path else None)
+    if cov_warns:
+        print(f"### 🧩 原型功能覆盖（{len(cov_warns)} 处，§4.33 原型功能须全写进 PRD）")
+        for w in cov_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：逐条核对原型中的按钮/弹窗/表单/区块是否已在 PRD §四 逐功能点写明"
+              "（功能说明 / 显示位置 / 权限 / 逐步操作逻辑）。漏写的必须补 PRD，"
+              "确属纯 UI 动词或本期无对应需求的，可忽略并在回复中说明。")
         print()
 
     # ---------- 自动补图（--auto-fill）----------
