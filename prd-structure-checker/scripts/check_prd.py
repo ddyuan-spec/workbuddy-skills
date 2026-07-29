@@ -1769,6 +1769,59 @@ def scan_screenshot_view_mismatch(html_text, base_dir=None):
     return blockers
 
 
+def scan_prototype_prd_sync(html_text, base_dir=None):
+    """启发式检测「改了原型但 PRD 没同步」（v1.0.33 沉淀 §4.32 PROTOTYPE_PRD_SYNC）。
+
+    规则：改任一原型文件（含「原型」的 .html）必须同步改对应 PRD 章节。
+    本函数做**兜底联动检测**：
+    - 提取同目录所有原型 HTML 的 <table> 列名（<th>）
+    - 若某列名（非通用 UI 列）在 PRD 全文（含列表字段表/表单字段表）中**完全找不到**
+      → 🟡 原型有此列但 PRD 未描述，疑似漏同步
+    - 列名 ≤8 字、排除「操作/状态/序号/按钮/功能/权限/显示条件/说明/备注」等纯 UI 列，
+      降低误报
+    """
+    warns = []
+    if not base_dir or not os.path.isdir(base_dir):
+        return warns
+
+    proto_files = [os.path.join(base_dir, f) for f in os.listdir(base_dir)
+                   if f.endswith('.html') and '原型' in f
+                   and os.path.isfile(os.path.join(base_dir, f))]
+    if not proto_files:
+        return warns
+
+    # PRD 全文纯文本（去标签 + 去空白）
+    prd_text_norm = re.sub(r'\s+', '', re.sub(r'<[^>]+>', ' ', html_text))
+
+    UI_WHITELIST = {'操作', '状态', '序号', '按钮', '功能', '权限', '显示条件',
+                    '说明', '备注', '字段名称', '需求说明', '功能名称', '项',
+                    '条件', '名称', '类型', '时间', '日期'}
+
+    proto_th_all = []
+    for pf in proto_files:
+        try:
+            pt = open(pf, encoding='utf-8', errors='ignore').read()
+        except Exception:
+            continue
+        ths = re.findall(r'<th[^>]*>(.*?)</th>', pt, re.DOTALL)
+        for t in ths:
+            name = re.sub(r'\s+', '', re.sub(r'<[^>]+>', '', t)).strip()
+            if name and name not in UI_WHITELIST and len(name) <= 8:
+                proto_th_all.append(name)
+
+    proto_th_set = list(dict.fromkeys(proto_th_all))  # 保序去重
+    missing_in_prd = [c for c in proto_th_set if c not in prd_text_norm]
+    if missing_in_prd:
+        warns.append(
+            f"🟡 **原型列名 PRD 未描述（疑似漏同步）**：原型列表列 {missing_in_prd} "
+            f"在 PRD 全文（含列表字段表/表单字段表）中找不到对应描述。\n"
+            f"   按 §4.32 PROTOTYPE_PRD_SYNC 规则，改原型须同步改 PRD；"
+            f"请核对本轮原型改动是否已同步到 PRD 对应章节。"
+            f"\n   （如本期确无 PRD，可忽略本提醒并在回复中说明）")
+
+    return warns
+
+
     """扫描非功能性需求章节中的冗余说明框/废话段落（v1.0.21 沉淀自评审）。
 
     规则 §4.21 VERBOSE_NFR_WARNING：
@@ -3038,6 +3091,20 @@ def main():
             print()
         print("处理要求：确认该功能点应在原型中显示的视图，用注入切换脚本的方式重截，"
               "并验证新截图 md5 ≠ 原型首页基准 md5。")
+        print()
+
+    # ---------- 阶段5（扩展）：原型⇄PRD 同步检测（§4.32）----------
+    sync_warns = scan_prototype_prd_sync(
+        raw_html if raw_html else html_text,
+        os.path.dirname(path) if path else None)
+    if sync_warns:
+        print(f"### 🔗 原型⇄PRD 同步（{len(sync_warns)} 处，§4.32 改原型须同步改 PRD）")
+        for w in sync_warns:
+            print(f"- {w}")
+            print()
+        print("处理要求：确认本轮是否改了原型。若改了原型且存在定稿 PRD，"
+              "必须将原型新增/改名的列、按钮、字段同步到 PRD 对应字段表/按钮表/功能逻辑；"
+              "若本期无 PRD 可跳过，但需在回复中说明。")
         print()
 
     # ---------- 自动补图（--auto-fill）----------
