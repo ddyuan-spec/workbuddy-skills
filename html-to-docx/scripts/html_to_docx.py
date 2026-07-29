@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-html_to_docx.py  ——  高保真 HTML -> Word(.docx) 转换器
-解决两类「Word 图片缺失」根因：
-  1) 相对路径 <img src="xxx.png">  —— 改为读取本地字节并 add_picture 内嵌（不再依赖外部文件）
-  2) 内联 <svg> 矢量图  ——  Word 不支持 SVG，先用 msedge headless 光栅化为 PNG 再内嵌
-同时保留：标题层级 / 表格边框(Table Grid + 显式边框) / 列表 / 加粗 / 链接 / 颜色 / 中文(eastAsia 字体)。
+html_to_docx.py  v2.1  ——  高保真 HTML -> Word(.docx) 转换器
+v2.1 修复（2026-07-29）：
+  - 修复中文乱码：每个 run 显式设置 w:eastAsia=Microsoft YaHei + post-process 补漏
+  - 图片嵌入沿用 v1 已验证路径（paragraph.add_picture），修复 heading 内 img 丢失问题
+  - 增加 post-process 验证与诊断输出
 用法：python html_to_docx.py <input.html> <output.docx> [--edge <msedge.exe>]
 """
 import sys, os, re, io, subprocess, argparse
 from bs4 import BeautifulSoup, NavigableString, Tag
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
+from docx.shared import Pt, Inches, RGBColor, Emu
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
@@ -24,6 +24,18 @@ def find_edge():
               r"C:/Program Files/Microsoft/Edge/Application/msedge.exe"]:
         if os.path.exists(p): return p
     return "msedge"
+
+# ── 核心：强制给每个 run 设置 CJK 字体 ──
+def _cjk(run, font="Microsoft YaHei"):
+    """在每个 run 上显式设置 eastAsia 字体，解决 WPS/Word 中文乱码。"""
+    rPr = run._r.get_or_add_rPr()
+    rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is None:
+        rFonts = OxmlElement('w:rFonts')
+        rPr.insert(0, rFonts)
+    rFonts.set(qn('w:eastAsia'), font)
+    rFonts.set(qn('w:ascii'), font)
+    rFonts.set(qn('w:hAnsi'), font)
 
 def set_cjk(style, font="Microsoft YaHei"):
     style.font.name = font
@@ -50,29 +62,35 @@ def add_hyperlink(paragraph, url, text):
     t = OxmlElement('w:t'); t.text = text; new_run.append(t)
     hyperlink.append(new_run); paragraph._p.append(hyperlink)
 
+# ── 内联元素处理（每个 run 都走 _cjk）──
 def add_inline(paragraph, node, bold=False):
     if isinstance(node, NavigableString):
         t = str(node)
         if t == "": return
         run = paragraph.add_run(t); run.bold = bold
+        _cjk(run)
         return
     tag = node.name
     if tag in ("b","strong"):
         for ch in node.children: add_inline(paragraph, ch, bold=True)
     elif tag == "code":
         for ch in node.children:
-            run = paragraph.add_run(str(ch) if isinstance(ch,NavigableString) else ch.get_text())
+            txt = str(ch) if isinstance(ch,NavigableString) else ch.get_text()
+            run = paragraph.add_run(txt)
             run.font.name = "Consolas"; run.font.color.rgb = RGBColor(0xbe,0x12,0x3c)
+            _cjk(run)
     elif tag == "a":
         add_hyperlink(paragraph, node.get("href",""), node.get_text())
     elif tag in ("span","em","i","font"):
         for ch in node.children: add_inline(paragraph, ch, bold=bold)
     elif tag == "br":
         paragraph.add_run().add_break()
-    elif tag == "img":
-        add_img(paragraph._parent, node)
-    elif tag == "svg":
-        add_svg(paragraph._parent, node)
+    elif tag in ("img", "svg"):
+        # 内联上下文中的图片/SVG：标记待处理，由调用方在 block 层处理
+        # 这里仅记录 alt 文本作为 fallback
+        alt = node.get("alt", "") if tag == "img" else f"[流程图]"
+        if alt:
+            run = paragraph.add_run(f"\n[图: {alt}]\n"); run.font.color.rgb = RGBColor(0x88,0x88,0x88); _cjk(run)
     else:
         for ch in node.children: add_inline(paragraph, ch, bold=bold)
 
@@ -84,24 +102,27 @@ def add_list(parent, el, ordered):
             elif ch.name in ("ul","ol"): add_list(parent, ch, ch.name=="ol")
             else: add_inline(p, ch)
 
-def add_img(parent, el, width=6.0):
+# ── 图片嵌入（用 python-docx 原生 API，已验证可靠）──
+def add_img(parent, el, width=5.8):
     src = el.get("src","")
     alt = el.get("alt","")
     if not src or src.startswith("http"):
         if alt:
-            p = parent.add_paragraph(); add_inline(p, NavigableString(alt))
+            p = parent.add_paragraph(); r = p.add_run("[缺失图片] "+alt); r.font.color.rgb=RGBColor(0xdc,0x26,0x26); _cjk(r)
         return
     path = os.path.join(BASE, src)
     if not os.path.exists(path):
         if alt:
-            p = parent.add_paragraph(); r = p.add_run("[缺失图片] "+alt); r.font.color.rgb=RGBColor(0xdc,0x26,0x26)
+            p = parent.add_paragraph(); r = p.add_run("[缺失图片] "+alt); r.font.color.rgb=RGBColor(0xdc,0x26,0x26); _cjk(r)
         return
     p = parent.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     with open(path,"rb") as f: data = f.read()
-    p.add_run().add_picture(io.BytesIO(data), width=Inches(width))
+    run = p.add_run()
+    picture = run.add_picture(io.BytesIO(data), width=Inches(width))
     if alt:
         cap = parent.add_paragraph(); cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
         r = cap.add_run(alt); r.italic = True; r.font.size = Pt(9); r.font.color.rgb = RGBColor(0x6b,0x72,0x80)
+        _cjk(r)
 
 def add_svg(parent, el, width=6.2):
     global SVG_COUNTER
@@ -110,9 +131,10 @@ def add_svg(parent, el, width=6.2):
     if png and os.path.exists(png):
         p = parent.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         with open(png,"rb") as f: data = f.read()
-        p.add_run().add_picture(io.BytesIO(data), width=Inches(width))
+        run = p.add_run()
+        run.add_picture(io.BytesIO(data), width=Inches(width))
     else:
-        parent.add_paragraph().add_run("[流程图渲染失败]").font.color.rgb = RGBColor(0xdc,0x26,0x26)
+        p = parent.add_paragraph(); r = p.add_run("[流程图渲染失败]"); r.font.color.rgb=RGBColor(0xdc,0x26,0x26); _cjk(r)
 
 def set_table_borders(table):
     tbl = table._tbl
@@ -166,13 +188,41 @@ def add_table(parent, el):
                 for para in cell.paragraphs:
                     for run in para.runs: run.bold = True
 
+# ── 预处理：解包标题内错误嵌套的块级子节点（修复「标题吞正文」）──
+def unwrap_heading_blocks(soup):
+    """html.parser 在 <h3> 内遇到 <h4>/<table> 时不会像浏览器那样隐式闭合标题，
+    导致后续内容被解析成该 h3 的子节点，转换器又把子节点全文塞进标题段落，
+    表现为「标题巨大 / 大小标题内容错乱重复」。
+    此处把标题内错误嵌套的【直接块级子节点】提升到与标题同级，恢复正确层级。
+    （源 HTML 在浏览器中显示正常，问题仅出在 html.parser 的解析差异。）"""
+    HEADING = ['h1','h2','h3','h4','h5','h6']
+    BLOCK = {'p','div','table','ul','ol','pre','blockquote','section',
+             'h1','h2','h3','h4','h5','h6','figure'}
+    for h in soup.find_all(HEADING):
+        # 逆序插入，保证文档顺序
+        for b in reversed([c for c in h.children
+                           if not isinstance(c, NavigableString) and c.name in BLOCK]):
+            h.insert_after(b)
+
+# ── 标题处理（只取直接文本 + 直接行内子节点，块级已在预处理解包）──
 def add_heading(parent, el, level):
     p = parent.add_paragraph()
     try:
         p.style = doc.styles["Title"] if level == 0 else doc.styles[f"Heading {level}"]
     except Exception:
         pass
-    add_inline(p, el)
+    for child in el.children:
+        if isinstance(child, NavigableString):
+            t = str(child)
+            if t.strip():
+                run = p.add_run(t); _cjk(run)
+        elif child.name == "img":
+            add_img(parent, child)
+        elif child.name == "svg":
+            add_svg(parent, child)
+        elif child.name in ("b","strong","span","em","i","font","code","a"):
+            add_inline(p, child)
+        # 其余块级子节点已在预处理阶段 unwrap 到标题同级，此处跳过
 
 def div_has_block(el):
     for ch in el.children:
@@ -230,6 +280,38 @@ def render_svgs(soup, edge, tmp):
         out.append(png_path)
     return out
 
+# ── 后处理验证 ──
+def post_process(doc):
+    """遍历所有段落，补漏 CJK 字体 + 输出诊断信息。"""
+    stats = {"total_runs": 0, "had_cjk": 0, "fixed": 0}
+    for p in doc.paragraphs:
+        for run in p.runs:
+            stats["total_runs"] += 1
+            rPr = run._r.find(qn('w:rPr'))
+            has_ea = False
+            if rPr is not None:
+                rf = rPr.find(qn('w:rFonts'))
+                if rf is not None and rf.get(qn('w:eastAsia')):
+                    has_ea = True
+            if has_ea:
+                stats["had_cjk"] += 1
+            else:
+                _cjk(run)
+                stats["fixed"] += 1
+    print(f"  FONT: runs={stats['total_runs']} had_eastAsia={stats['had_cjk']} fixed={stats['fixed']}")
+    print(f"  IMAGES: inline_shapes={len(doc.inline_shapes)} tables={len(doc.tables)} paras={len(doc.paragraphs)}")
+    # 标题健康检查：检测「标题吞正文 / 标题重复错乱」
+    # 成因：源 HTML 中 hN 标签开闭名不匹配（如 <h4>...</h5>、<h3>...</h4>），
+    #       html.parser 不会隐式闭合，导致后续整段被吞进该标题段落。
+    sus = 0
+    for p in doc.paragraphs:
+        if p.style.name.startswith('Heading') or p.style.name == 'Title':
+            t = p.text
+            if '\n' in t or len(t) > 60:
+                sus += 1
+                print(f"  ⚠️ HEADING HEALTH: [{p.style.name}] 疑似吞正文(len={len(t)}): {t[:50]!r}")
+    print(f"  HEADING HEALTH: suspect={sus}")
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("input"); ap.add_argument("output")
@@ -249,12 +331,23 @@ if __name__ == "__main__":
 
     doc = Document()
     set_cjk(doc.styles["Normal"]); doc.styles["Normal"].font.size = Pt(10.5)
+    pf = doc.styles["Normal"].paragraph_format
+    pf.line_spacing = 1.5
     for lvl in (0,1,2,3,4):
         try:
-            set_cjk(doc.styles["Title"] if lvl==0 else doc.styles[f"Heading {lvl}"])
+            s = doc.styles["Title"] if lvl==0 else doc.styles[f"Heading {lvl}"]
+            set_cjk(s)
+            sp = s.paragraph_format
+            sp.space_before = Pt(12 if lvl > 0 else 18)
+            sp.space_after = Pt(6)
         except Exception: pass
+
+    unwrap_heading_blocks(soup)
 
     body = soup.body or soup
     add_block(doc, body)
+    
+    post_process(doc)
+    
     doc.save(OUT)
-    print(f"OK saved {OUT} | svgs rendered={len(SVG_PNGS)} inline_images={len(doc.inline_shapes)} paragraphs={len(doc.paragraphs)} tables={len(doc.tables)}")
+    print(f"OK saved {OUT}")
