@@ -59,7 +59,28 @@ d = Document("out.docx")
 assert len(d.inline_shapes) >= 期望图片数   # 截图+流程图全部在内
 assert all(t._tbl.tblPr.find(qn('w:tblBorders')) is not None for t in d.tables)  # 表有边框
 # 抽查中文未乱码、标题层级(Title/Heading1/2)齐全
+
+# ⚠️ 标题吞正文/重复检查（必须 suspect=0）
+for p in d.paragraphs:
+    if p.style.name.startswith('Heading') or p.style.name == 'Title':
+        assert '\n' not in p.text and len(p.text) <= 60, f"标题异常: {p.text[:50]}"
 ```
+
+## ⚠️ 标题重复 / 标题吞正文排查（强约束，必须做）
+
+转换后若出现「某个标题文本极长、包含后续章节标题名、或大小标题内容错乱重复」，根因是**源 HTML 的 h1-h6 标题标签开闭名不匹配**：
+
+- 反例：`<h4>4.2.2 详细逻辑规则</h5>`（开 h4 闭 h5）、`<h3>4.4 ...</h4>`（开 h3 闭 h4）
+- 后果：`html.parser` 遇到不匹配的闭合标签会失效，该标题**实际未闭合**，后续整段内容（含其它标题文本）被解析为它的子节点，转换器再把子节点全文塞进标题段落 → 表现为「标题巨大 / 内容重复错乱」。
+- 浏览器里显示正常（浏览器会隐式闭合标题），所以肉眼看 HTML 不易发现，必须靠转换后自检。
+
+**两层防御：**
+1. **源文件优先修正**：转换前 grep 检查 `<h[1-6]>` 开标签与 `</h[1-6]>` 闭合是否同名成对；不匹配则直接改源 HTML（只改闭合标签名，保持层级不变）。
+2. **转换器内置兜底**：`unwrap_heading_blocks()` 预处理会把标题内错误嵌套的【直接块级子节点】（h4/table/div/...）提升到与标题同级；`add_heading()` 只取标题的**直接文本 + 直接行内子节点**，不再递归吞块级。
+
+**转换后必查（脚本已自动打印 `HEADING HEALTH: suspect=N`）**：
+- 遍历所有 Heading/Title 段落，若某标题文本含 `\n` 或长度 > 60 字符 → 判为「标题吞正文」异常，必须回头修源 HTML 标签配对，不能交付。
+- 正常：suspect=0。
 
 ## 已知限制
 
