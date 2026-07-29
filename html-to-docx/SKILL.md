@@ -82,6 +82,19 @@ for p in d.paragraphs:
 - 遍历所有 Heading/Title 段落，若某标题文本含 `\n` 或长度 > 60 字符 → 判为「标题吞正文」异常，必须回头修源 HTML 标签配对，不能交付。
 - 正常：suspect=0。
 
+## ⚠️ HTML 注释泄漏导致「标题重复」（强约束，v2.2 已修）
+
+**现象**：Word 中每个章节标题出现两次——一次是 `═══ 章节名 ═══` 样式的分隔线文本，一次是正式的 hN 标题。
+
+**根因**：源 HTML 中有章节分隔注释如 `<!-- ═══════════ 一、文档基本信息 ═══════════ -->`。bs4 的 `Comment` 类是 `NavigableString` 的子类，转换器 `add_block()` 中 `isinstance(child, NavigableString)` 会匹配到 Comment 对象，`str(comment)` 返回去掉 `<!-- -->` 后的纯文本 → 被当作普通正文段落输出 → 和正式 hN 标题形成「重复」。
+
+**修复（已固化进 v2.2 脚本）**：
+- 导入 `from bs4 import Comment`
+- 所有遍历 `el.children` 的函数（`add_block` / `add_heading` / `unwrap_heading_blocks`）统一在开头 `if isinstance(child, Comment): continue`
+- **以后任何 HTML 源文件中的注释都不会泄漏到 Word 输出中**
+
+**自检**：若发现 Word 中出现 `═══` 或 `----` 包裹的章节名文本 + 同名正式标题并存，即为注释泄漏，确认脚本版本 ≥ v2.2 即可。
+
 ## 已知限制
 
 - 复杂 CSS 布局（flex/grid/绝对定位）不会还原为 Word 版式，转为线性流式文档。
