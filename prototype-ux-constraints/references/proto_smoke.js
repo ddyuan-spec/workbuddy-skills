@@ -91,7 +91,10 @@ if (viewIds.length === 0) {
 console.log('=== [A] 视图容器归属 <main> 校验（空白页根因） ===');
 if (main) {
   const checkSet = new Set(viewIds);
-  [...document.querySelectorAll('[id]')].forEach(e => { if (/view/i.test(e.id)) checkSet.add(e.id); });
+  // 仅补充 id 以 view 开头的容器；排除侧栏导航链接（nav_* / A 标签），避免把导航项误判为视图容器
+  [...document.querySelectorAll('[id]')].forEach(e => {
+    if (/^view/i.test(e.id) && e.tagName !== 'A' && !/^nav[_A-Z]/i.test(e.id)) checkSet.add(e.id);
+  });
   [...checkSet].forEach(v => {
     const el = document.getElementById(v);
     if (!el) { fail('视图 #' + v + ' 在 DOM 中不存在'); return; }
