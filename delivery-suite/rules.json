@@ -1,0 +1,235 @@
+{
+  "skill": "delivery-suite",
+  "version": "1.0.0",
+  "updated": "2026-08-03",
+  "merged_from": ["proto-push", "html-to-docx", "exec-report"],
+  "severity_semantics": {
+    "BLOCKER": "违反即事故，禁止交付，必须回头修",
+    "REQUIRED": "必须执行，遗漏须补做后才能交付",
+    "ADVISED": "建议遵循，可按场景裁量"
+  },
+  "modules": [
+    {
+      "id": "push",
+      "name": "推送 GitHub Pages 生成短链",
+      "triggers": ["推 GitHub", "发线上链接", "改完推 GitHub", "GitHub Pages", "推送原型", "短链", "上线预览"],
+      "repos": {
+        "泰小虎/优惠券类需求": "ddyuan-spec/taixiaohu",
+        "skill 类文档": "ddyuan-spec/workbuddy-skills",
+        "短链格式": "https://ddyuan-spec.github.io/<repo>/<file>.html（仓库根目录文件）"
+      },
+      "steps": [
+        {"n": 1, "do": "Python 读文件 base64 → 查旧 sha（退出码判断）→ 生成 ./body.json"},
+        {"n": 2, "do": "gh api -X PUT repos/<owner>/<repo>/contents/<path> --input body.json"},
+        {"n": 3, "do": "curl raw.githubusercontent.com/<owner>/<repo>/main/<path> | grep 新内容标记"},
+        {"n": 4, "do": "删除 body.json / _push_*.py / b64.txt / sha*.txt 临时文件"}
+      ],
+      "snippet": "import base64, json, subprocess, os\nf = '优惠券体系新需求PRD.html'\nrepo, path = 'ddyuan-spec/taixiaohu', 'coupon-prd.html'\nb = base64.b64encode(open(f, 'rb').read()).decode()\nenv = os.environ.copy(); env['HTTPS_PROXY'] = ''; env['HTTP_PROXY'] = ''\nr = subprocess.run('gh api repos/%s/contents/%s -q .sha' % (repo, path), shell=True, capture_output=True, env=env)\nout = (r.stdout or b'').decode('utf-8', 'replace').strip()\nsha = out if (r.returncode == 0 and out) else ''\nbody = {'message': 'chore: push %s' % path, 'content': b}\nif sha: body['sha'] = sha\njson.dump(body, open('body.json', 'w'))"
+    },
+    {
+      "id": "docx",
+      "name": "HTML → Word(.docx) 高保真转换",
+      "triggers": ["转Word", "导出docx", "HTML转文档", "生成Word版", "图片缺失", "Word里图不见了"],
+      "env": {
+        "python": "C:/Users/13364/.workbuddy/binaries/python/envs/docx/Scripts/python.exe",
+        "preinstalled": ["python-docx", "beautifulsoup4", "lxml", "PIL"],
+        "script": "{SKILL_DIR}/scripts/html_to_docx.py",
+        "edge_for_svg": ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe"]
+      },
+      "usage": "<venv python> <script> <input.html> <output.docx> [--edge <msedge.exe>]",
+      "tag_mapping": {
+        "h1": "Title", "h2": "Heading1", "h3": "Heading2", "h4": "Heading3", "h5": "Heading4",
+        "p": "段落", "ul/ol": "项目符号/编号列表", "table": "docx 表格(显式边框)",
+        "b/strong": "加粗", "a": "超链接", "code": "等宽红字"
+      },
+      "limits": [
+        "复杂 CSS 布局(flex/grid/绝对定位)不还原 Word 版式，转为线性流式文档",
+        "不支持 <canvas> / <video> / 交互脚本",
+        "无 Edge 时 SVG 降级为「[流程图渲染失败]」文本，需手动补图"
+      ]
+    },
+    {
+      "id": "report",
+      "name": "本轮改动执行报告",
+      "triggers": ["执行报告", "改动汇总", "这轮改了啥", "汇报", "改动清单", "本轮总结", "改动总结"],
+      "purpose": "给人/给领导看的简洁报告，只讲「改了什么、验证过什么、线上在哪、还差什么」，不重复 PRD 内容",
+      "structure": [
+        {"n": 1, "section": "改动清单", "format": "表格 | 文件/对象 | 类型 | 具体改动 |", "type_enum": ["PRD 章节", "skill 规则", "原型页面", "推送"]},
+        {"n": 2, "section": "验证结果", "items": ["结构排查(prd-suite)通过/单薄", "自动化冒烟 proto_smoke 零失败零JS错误", "推送验证 raw grep 命中(True/False)", "skill 纪律已固化项"]},
+        {"n": 3, "section": "推送状态", "items": ["已推送线上短链列表", "明确标注哪些未推送(待用户确认)"]},
+        {"n": 4, "section": "待办/待确认", "items": ["二期待办(仅列 PRD §十一)", "⚠️ 待确认 @干系人", "下一步建议按优先级"]}
+      ],
+      "auto_trigger": "一轮多文件改动(PRD + skill + 原型)完成后可自律生成，便于用户直接转发"
+    }
+  ],
+  "rules": [
+    {
+      "id": "DLV-PUSH-001",
+      "severity": "BLOCKER",
+      "module": "push",
+      "rule": "base64 内容绝不作为命令行参数传递，必须由 Python 写入 ./body.json 后用 --input 引用",
+      "forbid": [
+        "printf '{\"content\":\"%s\"}' \"$(cat b64.txt)\"",
+        "echo \"$(cat b64)\" 展开超长 base64",
+        "gh api -f content=\"$b64\""
+      ],
+      "why": "Windows Git Bash 下超长 base64 会静默截断（ARG_MAX 超限），GitHub 收到旧/空内容但仍返回 200 且 sha 更新，极具迷惑性",
+      "source": "多次踩坑固化"
+    },
+    {
+      "id": "DLV-PUSH-002",
+      "severity": "BLOCKER",
+      "module": "push",
+      "rule": "--input 的临时文件必须放当前工作目录用相对路径（./body.json）",
+      "forbid": ["/tmp/body.json 等 Unix 风格路径"],
+      "why": "gh.exe 是 Windows 原生程序，不认 Unix /tmp/... → 读不到 body"
+    },
+    {
+      "id": "DLV-PUSH-003",
+      "severity": "REQUIRED",
+      "module": "push",
+      "rule": "查旧 sha 必须用 subprocess 退出码判断文件是否存在，存在→带 sha 更新，不存在→不带 sha 新建",
+      "forbid": ["直接把 gh api -q .sha 的 stdout 赋给变量"],
+      "why": "文件不存在时 gh 返回 404 错误 JSON，会污染 sha 变量导致 PUT 失败"
+    },
+    {
+      "id": "DLV-PUSH-004",
+      "severity": "BLOCKER",
+      "module": "push",
+      "rule": "推送后必须用 raw.githubusercontent.com 抓取内容并 grep 新增标记（版本号/新章节标题），确认命中才可告知用户已上线",
+      "forbid": ["仅凭 gh api 返回 200 或 commit sha 变化就宣布上线"],
+      "check": "curl -s https://raw.githubusercontent.com/<owner>/<repo>/main/<path> | grep -c \"<新内容标记>\"",
+      "why": "base64 截断时 sha 也会更新但内容没变；raw 无 Pages CDN 缓存，是唯一可信验证源"
+    },
+    {
+      "id": "DLV-PUSH-005",
+      "severity": "REQUIRED",
+      "module": "push",
+      "rule": "推送并验证通过后立即删除临时文件（body.json / _push_*.py / b64.txt / sha*.txt），不污染工作区",
+      "note": "项目目录下 rm 可能被安全包装器拦截，改用 Python os.remove"
+    },
+    {
+      "id": "DLV-PUSH-006",
+      "severity": "REQUIRED",
+      "module": "push",
+      "rule": "所有 gh 调用需绕过代理",
+      "must": [
+        "Bash 直接调用：命令前加 HTTPS_PROXY=\"\"",
+        "Python subprocess：用 env 参数注入 HTTPS_PROXY='' 与 HTTP_PROXY=''"
+      ]
+    },
+    {
+      "id": "DLV-PUSH-007",
+      "severity": "BLOCKER",
+      "module": "push",
+      "rule": "Python subprocess 用 shell=True 时走的是 Windows cmd.exe，不是 Git Bash — 禁用任何 bash-only 语法",
+      "forbid": [
+        "HTTPS_PROXY=\"\" gh ... 这种变量前缀语法（cmd.exe 解析失败）",
+        "管道调用 base64 -d（cmd.exe 无此命令）",
+        "$(...) 命令替换、|| && 组合等 bash 语法"
+      ],
+      "must": [
+        "环境变量走 subprocess(env=...)",
+        "base64 解码走 Python base64.b64decode",
+        "捕获输出用 capture_output=True 后 .decode('utf-8','replace')，防 gh stderr 含非 UTF8 字节崩溃"
+      ],
+      "source": "2026-08-03 skill 同步踩坑"
+    },
+    {
+      "id": "DLV-DOCX-001",
+      "severity": "REQUIRED",
+      "module": "docx",
+      "rule": "必须使用预置 venv 的 python.exe，已预装全部依赖，禁止联网 pip install",
+      "must": ["C:/Users/13364/.workbuddy/binaries/python/envs/docx/Scripts/python.exe"],
+      "note": "这是 Windows 版 python.exe，不接受 /c/... 风格路径，参数必须用 C:/... 或 C:\\... 形式"
+    },
+    {
+      "id": "DLV-DOCX-002",
+      "severity": "BLOCKER",
+      "module": "docx",
+      "rule": "图片必须 open(path,'rb') 读字节后 run.add_picture(BytesIO(data)) 内嵌进 docx media 区",
+      "forbid": ["保留 <img src=\"assets/xxx.png\"> 相对路径外链"],
+      "why": "外链图片在别的机器/离线打开就丢失，是「Word 图片缺失」根因之一"
+    },
+    {
+      "id": "DLV-DOCX-003",
+      "severity": "BLOCKER",
+      "module": "docx",
+      "rule": "内联 <svg> 必须先用 msedge --headless=new --screenshot 光栅化为 PNG（2x）再内嵌",
+      "why": "Word 不支持渲染 SVG，直接转会丢图，是「Word 图片缺失」根因之二",
+      "detail": "渲染前去掉 svg 的 style，把 viewBox 尺寸写成 width/height 属性，窗口设为 viewBox 尺寸，加 --force-device-scale-factor=2"
+    },
+    {
+      "id": "DLV-DOCX-004",
+      "severity": "REQUIRED",
+      "module": "docx",
+      "rule": "给 Normal 与各级 Heading 设置 w:rFonts 的 ascii/hAnsi/eastAsia 为 Microsoft YaHei",
+      "why": "防止中文显示为方框"
+    },
+    {
+      "id": "DLV-DOCX-005",
+      "severity": "REQUIRED",
+      "module": "docx",
+      "rule": "表格除引用 Table Grid 样式外，还须往 tblPr 显式注入 w:tblBorders（top/left/bottom/right/insideH/insideV 全 single sz=4 color=999999）",
+      "why": "双保险确保 Word 一定显示边框"
+    },
+    {
+      "id": "DLV-DOCX-006",
+      "severity": "BLOCKER",
+      "module": "docx",
+      "rule": "转换后必须跑标题健康自检，suspect 必须为 0 才可交付",
+      "check": "遍历所有 Heading/Title 段落：文本含 \\n 或长度 > 60 字符 → 判为「标题吞正文」异常；脚本会自动打印 HEADING HEALTH: suspect=N",
+      "on_fail": "回头修源 HTML 的 hN 标签配对，不能带病交付"
+    },
+    {
+      "id": "DLV-DOCX-007",
+      "severity": "REQUIRED",
+      "module": "docx",
+      "rule": "转换前 grep 检查源 HTML 的 <h[1-6]> 开标签与 </h[1-6]> 闭合是否同名成对，不匹配直接改源 HTML（只改闭合标签名，保持层级不变）",
+      "why": "开闭不匹配（如 <h4>...</h5>）会让 html.parser 失效，后续整段被解析为该标题子节点 → Word 中标题巨大/内容重复错乱。浏览器会隐式闭合所以肉眼看不出",
+      "example_bad": ["<h4>4.2.2 详细逻辑规则</h5>", "<h3>4.4 ...</h4>"]
+    },
+    {
+      "id": "DLV-DOCX-008",
+      "severity": "REQUIRED",
+      "module": "docx",
+      "rule": "所有遍历 el.children 的函数（add_block / add_heading / unwrap_heading_blocks）开头必须 if isinstance(child, Comment): continue",
+      "why": "bs4 的 Comment 是 NavigableString 子类，会被当普通正文输出 → HTML 章节分隔注释「═══ 一、文档基本信息 ═══」泄漏进 Word 造成标题重复",
+      "check": "Word 中若出现 ═══ 或 ---- 包裹的章节名 + 同名正式标题并存 = 注释泄漏，确认脚本 ≥ v2.2",
+      "status": "v2.2 已修复"
+    },
+    {
+      "id": "DLV-DOCX-009",
+      "severity": "REQUIRED",
+      "module": "docx",
+      "rule": "若 <img>/<svg> 嵌在 <h4> 等标题标签内部，add_inline 须把图片加到段落的块容器 paragraph._parent 而非段落本身",
+      "why": "段落对象无 add_paragraph 方法，直接加会 AttributeError",
+      "status": "已修复"
+    },
+    {
+      "id": "DLV-RPT-001",
+      "severity": "REQUIRED",
+      "module": "report",
+      "rule": "执行报告固定四段：改动清单 → 验证结果 → 推送状态 → 待办/待确认，缺一不可"
+    },
+    {
+      "id": "DLV-RPT-002",
+      "severity": "BLOCKER",
+      "module": "report",
+      "rule": "报告是「索引 + 结论」，禁止塞 PRD 全文或原型代码，细节引导去 PRD/原型看",
+      "must": ["产出可直接转发的短报告", "突出业务价值与 action"]
+    },
+    {
+      "id": "DLV-RPT-003",
+      "severity": "BLOCKER",
+      "module": "report",
+      "rule": "二期待办只写进 PRD §十一，禁止写入项目记忆（MEMORY.md / 每日流水）",
+      "ref": "prd-suite PRD-GOV-002"
+    }
+  ],
+  "related": {
+    "prd-suite": "推送前 PRD 须先过 prd-suite 结构排查",
+    "proto-suite": "推送前原型须先过 proto-suite 冒烟测试",
+    "requirement-workflow": "定版确认后由本 suite 执行推送与交付"
+  }
+}
