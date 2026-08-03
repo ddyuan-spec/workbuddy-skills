@@ -1,0 +1,261 @@
+{
+  "skill": "requirement-workflow",
+  "version": "1.0.0",
+  "updated": "2026-08-03",
+  "merged_from": ["requirement-workflow", "agent-era-delivery(吸收为lite模式)"],
+  "severity_semantics": {
+    "BLOCKER": "违反即事故，禁止进入下一步/交付，必须回头修",
+    "REQUIRED": "必须执行，遗漏须补做后才能交付",
+    "ADVISED": "建议遵循，可按场景裁量"
+  },
+  "modules": [
+    {
+      "id": "flow",
+      "name": "需求输出主流程（10 步 + 门禁）",
+      "triggers": ["新需求", "有个新需求", "来个需求", "梳理需求", "出PRD", "画原型", "按规范输出需求"],
+      "scope": "所有项目新需求强制走完整 10 步；小修小补可裁剪，但范围确认门禁与产出校验 Hook 仍生效",
+      "rule_prefixes": ["REQ-FLOW"]
+    },
+    {
+      "id": "lite",
+      "name": "Agent 时代三件套交付（轻量模式，吸收自 agent-era-delivery）",
+      "triggers": ["三件套", "Agent时代交付", "proposal.md", "原型.html", "spec.md", "评审原型页", "需求三件套", "agent-era"],
+      "scope": "仅当用户显式要「三件套 / Agent 时代交付」时启用；不拦截主流程触发词（新需求/出PRD/画原型仍走 flow）",
+      "rule_prefixes": ["REQ-LITE"]
+    }
+  ],
+  "workflow_steps": [
+    "Step 0 任务判断与准备（规模/任务列表/日志）",
+    "Step 1 收集项目信息 → 功能现状澄清(1.4) → 产出功能生命周期映射表初稿(1.5) → 分端口现状调研四象限(1.6)",
+    "【范围确认门禁】用户逐行标注并确认本期范围后，才允许进入 Step 2",
+    "Step 2 需求梳理 → 统一 HTML 图集（严格基于已确认范围）",
+    "Step 3 输出可交互原型（每端口）+ 客户端设计原型平铺稿（墨刀用）",
+    "Step 4 PRD 结构检查（过 prd-suite structure 模块）",
+    "Step 5 PRD 输出（Word）+ 待确认项文档 + 反问 Loop",
+    "Step 6 本地路径确认",
+    "Step 7 终版存档 GitHub（推送后远端门禁）",
+    "Step 8 评审后本地修改 → 再推送",
+    "Step 9 收尾：归档、删过程文件、更新索引与记忆"
+  ],
+  "gates": [
+    {"id": "scope-gate", "between": "Step 1 → Step 2", "rule": "REQ-FLOW-002", "pass": "用户已逐行标注功能生命周期映射表（本期做/增强/不做/待定）并显式确认本期范围；或显式列出本期功能点", "fail": "AI 不得生成图集/FR，先用 AskUserQuestion 催办标注"},
+    {"id": "produce-hook", "at": "Step 2/3/4/5/6/7/8 产出后", "rule": "REQ-FLOW-011", "pass": "通用三查(数量/格式/内容错乱)全过 + Step7/8 远端 404/预览页全过", "fail": "立即修复重检，循环到全过，AI 须在回复报告校验结果"},
+    {"id": "prd-gate", "at": "Step 4", "rule": "REQ-FLOW-008", "pass": "prd-suite structure 模块 check_prd.py 输出「通过」（一~九齐全 + §四 深度达标）", "fail": "缺/单薄项已反问或⚠️待确认占位，无臆造"}
+  ],
+  "rules": [
+    {
+      "id": "REQ-FLOW-001",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "强制触发：所有项目新需求必须立即、无条件触发本 workflow，不得跳过或用普通回复替代",
+      "exception": ["明确是改文案/加单字段等小修小补且用户未称需求 → 可走轻量修改说明，仍建议提示是否走 workflow", "用户显式说「不要走 workflow/直接改」→ 遵从并记录原因"],
+      "source": "requirement-workflow 触发条件"
+    },
+    {
+      "id": "REQ-FLOW-002",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "范围确认门禁（Step1→Step2）：功能生命周期映射表用户逐行标注确认前，AI 不得生成图集/FR",
+      "pass": "用户已返回标注结果（本期做/增强/不做/待定逐行确认）或显式列出本期功能点",
+      "fail": "用 AskUserQuestion 或等待标注返回；「待定/待确认」行归入待确认项，不得作已确认功能写进 FR",
+      "machine_check": "produce-check-hook.py --scope <功能生命周期标注.html> 检查含 SCOPE_CONFIRMED 标记或伴随确认文件",
+      "source": "requirement-workflow 范围确认门禁"
+    },
+    {
+      "id": "REQ-FLOW-003",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "引导式逐步收集：端口最先单独对齐，其余维度逐项分轮，禁止一次性打包抛出",
+      "order": ["① 设计参考样式", "② 历史数据/信息", "③ 关联需求", "④ 人员(逐人：PM→研发→测试→UI→数据)", "⑤ 里程碑(单独一轮)"],
+      "forbid": ["一次性把多个维度问题打包丢给用户"],
+      "must": ["已知信息直接公布请确认不重复问", "端口为最高优先必须最先单独对齐"],
+      "source": "requirement-workflow 总体原则10 / 1.1"
+    },
+    {
+      "id": "REQ-FLOW-004",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "功能现状澄清前置（Step 1.4）：先提问再产出映射表，现状不清范围必偏",
+      "must": ["先搞清「现有系统/平台盘点 + 现有功能/数据盘点 + 第三方依赖 + 本期真正动作 + 复用vs新增」五要素", "只有用户/业务侧知道的领域事实（如火山直播是采购的、平台端已有商品中心）必须主动提问获取，代码查不到", "映射表「存量/新增/第三方」列必须基于澄清结果，禁止臆造"],
+      "gate": "三要素（现有系统/真正动作/复用vs新增）未齐前不得进 1.5 产出映射表、更不得进 Step 2",
+      "source": "requirement-workflow 1.4"
+    },
+    {
+      "id": "REQ-FLOW-005",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "原型纯粹性原则：原型只保留可交互页面与弹窗，禁止任何解释性内容",
+      "forbid": ["原型说明区块", "状态说明卡片", "关键交互规则列表", "字段对照解释", "图例/界面清单表格"],
+      "must": ["所有业务规则/状态定义/字段映射/交互逻辑说明放入需求梳理图集或 PRD，不在原型重复"],
+      "source": "requirement-workflow 3.0"
+    },
+    {
+      "id": "REQ-FLOW-006",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "交付前交互自检（Step 3.0B）：每个可点元素点击有响应，无死按钮",
+      "must": ["列出页面/弹窗每个可点元素逐一确认点击有响应（开关弹窗/删除/提交toast/状态变更）", "动态计数（已选N个/列表计数）删除新增后实时更新，弹窗提示数字取实时值不硬编码", "缺交互当场补齐再交付"],
+      "source": "requirement-workflow 3.0B"
+    },
+    {
+      "id": "REQ-FLOW-007",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "输出前端交互原型前必须调 proto-suite（原 prototype-ux-constraints）并按其约束调整",
+      "must": ["禁止页面内加「前端拦截说明/规则说明/演示」等解释性文案", "禁止臆测新气泡/弹窗样式，提示复用现有全局Toast/弹窗", "购买级别/权限拦截：选中规格不提示，仅点加入购物车/立即购买时提示；提示后保持规格可选不置灰"],
+      "source": "requirement-workflow 3.0C"
+    },
+    {
+      "id": "REQ-FLOW-008",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "PRD 必须先过 prd-suite structure 模块（原 prd-structure-checker）结构排查才能定稿",
+      "must": ["调用 check_prd.py，必含板块一~九只能多不能少，§四 深度达标", "缺失/未知项直接反问或⚠️待确认占位，禁止臆造", "通过后才进 Step 5"],
+      "source": "requirement-workflow 4 / 总体原则3"
+    },
+    {
+      "id": "REQ-FLOW-009",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "PRD 骨架以一~九为准（对齐260715 docx），严禁旧 A~I 写法；§四 功能需求详情按页面拆解",
+      "must": ["终稿骨架以 prd-suite 一~九为唯一权威", "§四 每页 X.1 原型与交互 + X.2 详细逻辑", "不得另起一套编号"],
+      "source": "requirement-workflow 4 结构权威"
+    },
+    {
+      "id": "REQ-FLOW-010",
+      "severity": "REQUIRED",
+      "module": "flow",
+      "rule": "客户端设计原型平铺稿必做（Step 3.3）：可交互原型确认后仅客户端额外输出平铺稿供墨刀",
+      "must": ["App/H5/小程序页面按顺序平铺一 HTML，无交互/无跳转/无弹窗逻辑，纯静态一屏总览", "含「一键复制源码」按钮复制完整HTML到剪贴板", "每页配简短标题标注", "管理后台不需要", "命名 {需求名}-客户端设计原型-flat.html"],
+      "source": "requirement-workflow 3.3"
+    },
+    {
+      "id": "REQ-FLOW-011",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "产出校验 Hook（每步产出门禁）：数量 + 格式 + 内容错乱；Step7/8 推送后查远端 404 + 预览页",
+      "local_three_check": ["数量（不缺不重，无过程文件混入）", "格式（HTML可解析/DOCX为合法OOXML/命名合规/图片为真实格式非Markdown）", "内容错乱（①乱码U+FFFD ②裂图缺图 ③结构损坏 ④Markdown残留 ⑤依赖缺失）"],
+      "remote_check": ["curl -sI 查 HTTP 全 200 无 404/403", "打开 Pages/raw 预览页确认渲染+资源无404"],
+      "must": ["不通过立即修复重检循环到全过", "AI 须在回复报告校验结果（✅/❌+具体项），未报告视为未过门禁"],
+      "script": "references/produce-check-hook.py <需求文件夹> --step N --expect 文件名...",
+      "source": "requirement-workflow 产出校验Hook"
+    },
+    {
+      "id": "REQ-FLOW-012",
+      "severity": "REQUIRED",
+      "module": "flow",
+      "rule": "图片校验 Loop：含图交付物（图集/原型/平铺稿/PRD）生成后本地校验一次 + 推送 GitHub 后远端校验一次",
+      "must": ["本地：生成后立即自查（浏览器开HTML/转图查Word）修复到全正常才推", "远端：推送后开 Pages/raw 确认无裂图，异常则修本地重推", "退出：本地与远端图片全部正常"],
+      "source": "requirement-workflow 图片校验Loop"
+    },
+    {
+      "id": "REQ-FLOW-013",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "禁止臆测：不确定数据必须 @干系人 占位或用 AskUserQuestion 反问",
+      "must": ["凡不确定数据二选一：⚠️待确认 @干系人 占位 / 反问具体数值", "禁止凭「我觉得应该是」填内容"],
+      "source": "requirement-workflow 总体原则2"
+    },
+    {
+      "id": "REQ-FLOW-014",
+      "severity": "REQUIRED",
+      "module": "flow",
+      "rule": "present_files 只展示最新定版文件，不堆历史版本",
+      "source": "requirement-workflow 总体原则5"
+    },
+    {
+      "id": "REQ-FLOW-015",
+      "severity": "REQUIRED",
+      "module": "flow",
+      "rule": "生成器脚本随源文件同目录保存但不上 GitHub",
+      "source": "requirement-workflow 总体原则6"
+    },
+    {
+      "id": "REQ-FLOW-016",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "§五 埋点需求须链接《泰小虎埋点规范v2.3》或内嵌双表，禁止5列简化版（与 prd-suite PRD-STRUCT-006 同）",
+      "must": ["三件套：说明句 + 在线链接 + 本期涉及事件精简表", "事件/属性只取既有30事件目录，禁凭空编造；参数用友盟中文名"],
+      "source": "requirement-workflow 5.2(12)"
+    },
+    {
+      "id": "REQ-FLOW-017",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "需求梳理图集业务流程图/信息架构/状态机须为 SVG 图片，禁止 Markdown 流程图",
+      "must": ["2.4 业务流程图 / 2.5 信息架构 / 2.6 状态机 必须为 SVG 或流程图图片", "无 ```mermaid``` 或 Markdown 流程语法残留"],
+      "source": "requirement-workflow 2.4/2.5/2.6"
+    },
+    {
+      "id": "REQ-FLOW-018",
+      "severity": "ADVISED",
+      "module": "flow",
+      "rule": "脑图/用户旅程优先输出 Markdown 大纲（可导入钉钉文档切换为思维导图）",
+      "source": "requirement-workflow 2.7"
+    },
+    {
+      "id": "REQ-FLOW-019",
+      "severity": "BLOCKER",
+      "module": "flow",
+      "rule": "范围确认后图集/FR 严格基于已确认范围，未确认功能不写",
+      "must": ["图集/FR 唯一依据 = 已确认范围", "确认后在标注文件写 SCOPE_CONFIRMED 或生成伴随确认 md"],
+      "source": "requirement-workflow 2 / 范围确认门禁"
+    },
+    {
+      "id": "REQ-FLOW-020",
+      "severity": "REQUIRED",
+      "module": "flow",
+      "rule": "收尾：归档终版、删除过程文件、更新索引与记忆",
+      "must": ["终版文件存需求文件夹，删临时副本/中间版本HTML", "更新项目文档索引（如 00-文档索引.html）", "在 .workbuddy/memory/YYYY-MM-DD.md 追加完成记录；长期规则更新 MEMORY.md"],
+      "source": "requirement-workflow 9"
+    },
+    {
+      "id": "REQ-LITE-001",
+      "severity": "BLOCKER",
+      "module": "lite",
+      "rule": "三件套 = proposal.md（收范围 Why/What/Impact/后续迭代）+ 原型.html（左导航+中高保真+右旁注评审页）+ spec.md（一~九执行规格）",
+      "source": "agent-era-delivery"
+    },
+    {
+      "id": "REQ-LITE-002",
+      "severity": "BLOCKER",
+      "module": "lite",
+      "rule": "spec.md 必须调 prd-suite structure 模块（原 prd-structure-checker）校验一~九骨架，通过后才定稿",
+      "source": "agent-era-delivery 与现有skill关系"
+    },
+    {
+      "id": "REQ-LITE-003",
+      "severity": "REQUIRED",
+      "module": "lite",
+      "rule": "原型.html 刻意带「右旁注」作为评审锚点（与 flow 的纯粹原型区别）；旁注内容应回流进 PRD §四",
+      "source": "agent-era-delivery 与现有skill关系"
+    },
+    {
+      "id": "REQ-LITE-004",
+      "severity": "BLOCKER",
+      "module": "lite",
+      "rule": "不拦截主流程：用户说「新需求/出PRD/画原型」等走 flow；本模式仅用户显式要「三件套/Agent时代交付」时启用",
+      "must": ["同一对话先说新需求又提三件套 → 先确认意图：团队正式PRD走flow，Agent轻量交付走lite", "用户明确要求走完整团队PRD流程（出docx/10步）时不要用本模式替代"],
+      "source": "agent-era-delivery 不适用/冲突处理"
+    },
+    {
+      "id": "REQ-LITE-005",
+      "severity": "BLOCKER",
+      "module": "lite",
+      "rule": "写作红线同 PRD：spec.md 含一~九；§四按页面拆解逐功能点细写；§五埋点链接v2.3或内嵌双表；不确定数据⚠️待确认占位",
+      "source": "agent-era-delivery 写作红线"
+    },
+    {
+      "id": "REQ-LITE-006",
+      "severity": "REQUIRED",
+      "module": "lite",
+      "rule": "常规交互（hover/loading/disabled）交组件规范兜底，只显式定义有业务含义的状态（计费/权限/数据安全/删除留痕）",
+      "source": "agent-era-delivery 写作红线"
+    }
+  ],
+  "related": {
+    "prd-suite": "flow Step 4 / lite spec.md 必须过 prd-suite structure 模块",
+    "proto-suite": "flow Step 3 前端原型须过 proto-suite 约束 + 冒烟门禁",
+    "delivery-suite": "flow Step 7/8 推送 GitHub + 转 Word 由 delivery-suite 执行"
+  }
+}
