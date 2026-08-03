@@ -1,0 +1,571 @@
+{
+  "skill": "prd-suite",
+  "version": "1.0.0",
+  "updated": "2026-08-03",
+  "merged_from": ["prd-structure-checker", "prd-diff", "prd-single-page-detail", "prd-screenshot-sync"],
+  "severity_semantics": {
+    "BLOCKER": "违反即事故，禁止交付，必须回头修",
+    "REQUIRED": "必须执行，遗漏须补做后才能交付",
+    "ADVISED": "建议遵循，可按场景裁量"
+  },
+  "modules": [
+    {
+      "id": "structure",
+      "name": "PRD 结构排查（一~九 + §四 深度 + 阶段4 红线）",
+      "triggers": ["写PRD", "改PRD", "审PRD", "终稿排查", "需求评审", "结构检查"],
+      "scope": "任何产出/审阅/修订「需求文档 / PRD / 产品需求说明书」时强制加载，通过后才能定稿",
+      "runner": {
+        "python": "C:\\Users\\13364\\.workbuddy\\binaries\\python\\envs\\docx\\Scripts\\python.exe",
+        "script": "{SKILL_DIR}/scripts/check_prd.py",
+        "phase1": "python <script> <prd.html>  # 一~九 存在性 + §四 深度 + 待确认 + 阶段4 红线",
+        "phase2": "python <script> <prd.html> --strict  # 本期新增/改动页面缺 2.1 原型截图/2.2 逻辑 → 阻断",
+        "phase3": "python <script> <prd.html> --auto-fill  # 检出缺图直接补截图不询问",
+        "exit_codes": {"0": "通过", "1": "不通过（缺失/深度单薄/红线）", "2": "参数错误"}
+      },
+      "rule_prefixes": ["PRD-STRUCT"]
+    },
+    {
+      "id": "detail",
+      "name": "单页 §四 需求详情写作（2.1~2.7 模板）",
+      "triggers": ["单页需求详情", "单独写某页PRD", "基于原型写PRD"],
+      "scope": "把前端原型单个页面/Tab/弹窗拆成只含 §四 的 PRD HTML 时加载",
+      "rule_prefixes": ["PRD-DETAIL"]
+    },
+    {
+      "id": "diff",
+      "name": "定版 vs 线上草稿差距对比",
+      "triggers": ["差距对比", "和线下定版比", "PRD比对", "定版vs线上", "diff PRD"],
+      "scope": "给定版 docx 与线上 GitHub Pages HTML 比对差距时加载",
+      "rule_prefixes": ["PRD-DIFF"]
+    },
+    {
+      "id": "screenshot",
+      "name": "原型截图对齐（过期图重截）",
+      "triggers": ["截图过期", "原型改了截图没换", "重截PRD图", "确认PRD图片最新"],
+      "scope": "PRD 内嵌原型截图因原型改版而过期的重截与同步时加载",
+      "runner": {
+        "python": "C:\\Users\\13364\\.workbuddy\\binaries\\python\\envs\\docx\\Scripts\\python.exe",
+        "script": "{SKILL_DIR}/scripts/recap_shots.py",
+        "cmd": "python <script> --map <PRD>/screenshot-map.json [--push] [--dry]",
+        "edge": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe 或 C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+      },
+      "rule_prefixes": ["PRD-SHOT"]
+    }
+  ],
+  "rules": [
+    {
+      "id": "PRD-STRUCT-001",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "终稿必含板块一~九只能多不能少，缺失任一即不通过（额外板块允许存在）",
+      "must": ["一、文档基本信息（含历史修订记录表）", "二、项目背景与目标（含KPI）", "三、业务流程与架构（流程图+信息架构+状态机）", "四、功能需求详情（按页面拆解）", "五、非功能性需求（埋点链接引用）", "六、验收标准", "七、关键边界设计检查清单", "八、文档维护与变更规范", "九、待确认项汇总"],
+      "source": "prd-structure-checker §一~九"
+    },
+    {
+      "id": "PRD-STRUCT-002",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "§四 必须按页面拆解，每个页面含 X.1 页面原型与交互示意 + X.2 详细逻辑规则",
+      "must": ["X.1：原型截图（非流程SVG）+ 交互说明", "X.2 界面与展示规则：列表字段表 + 功能按钮权限表 + 展示空/异常态", "X.2 业务逻辑与边界条件：按钮四要素 + 逐步操作逻辑 + 表单规则 + 查询条件 + 字段级数据来源 + 计算公式 + 边界条件"],
+      "forbid": ["一段扁平摘要表充当全部内容", "只写「要素/说明」汇总表缺结构化子节"],
+      "source": "prd-structure-checker §四"
+    },
+    {
+      "id": "PRD-STRUCT-003",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "写 §四 前先梳理已知vs未知；不确定数据禁止臆测，二选一：①「⚠️ 待确认 @干系人」占位 ② AskUserQuestion 反问具体数值",
+      "forbid": ["凭「我觉得应该是…」填数值", "先占位移交评审", "用「待确认」容器装设计已裁定的矛盾项"],
+      "must": ["写完后向用户汇总 N 处待确认项", "用户坚持占位时只留「⚠️ 待确认 @干系人」，禁编数值"],
+      "source": "prd-structure-checker 不确定性处理"
+    },
+    {
+      "id": "PRD-STRUCT-004",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "阶段4 红线词扫描：范围外端口/能力出现须带「不涉及/不在范围/排除」豁免声明",
+      "red_line_words": ["商家端后台", "商家端", "回放", "火山SaaS", "火山 SaaS", "SaaS配置", "火山引擎直播配置"],
+      "judge": "红线词 ±30 字内无豁免声明 → 告警",
+      "must": ["范围外须明确写「本需求不涉及XX」", "禁止把红线词当功能实现写进PRD，也不许以「待确认/可能缺失」暗示"],
+      "source": "prd-structure-checker §4.1"
+    },
+    {
+      "id": "PRD-STRUCT-005",
+      "severity": "REQUIRED",
+      "module": "structure",
+      "rule": "待确认溯源：引用字段正文未定义即悬空",
+      "judge": "提取「⚠️ 待确认 @干系人：<事项>」引号内字段名，若全文仅出现1次（只在待确认处）→ 告警疑似悬空",
+      "must": ["删掉悬空待确认，或先在字段表定义该字段再保留待确认"],
+      "source": "prd-structure-checker §4.2"
+    },
+    {
+      "id": "PRD-STRUCT-006",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "埋点规范：含埋点内容须链接引用《泰小虎埋点规范v2.3》或内嵌v2.3双表，禁止5列简化版",
+      "forbid": ["5列简化版（所属终端/所在页面/事件名称/触发时机/上报参数）"],
+      "must": ["§五 埋点需求三件套：说明句 + 在线链接 + 本期涉及事件精简表（事件英文名|显示名|层|平台|触发时机|必含参数|备注）", "事件/属性必须从v2.3既有目录选取，禁凭空编造；参数用友盟中文名", "新事件走埋点评审，不在PRD内新增定义"],
+      "source": "prd-structure-checker §4.3 / §五"
+    },
+    {
+      "id": "PRD-STRUCT-007",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "业务流程图一致性：须有已梳理的横向泳道全链路图，并经用户确认",
+      "must": ["动笔写 §三 前必须先有已梳理确认的流程图；没有则先停止写PRD去画流程图", "PRD流程图应直接引用需求梳理阶段权威图，禁在PRD独立重绘与梳理文件不一致的图", "流程图旁须标注「本图与《XX业务流程图》一致」并注权威来源"],
+      "judge": "检测到 <svg>/<img> 流程图但 ±600 字无「已梳理/横向泳道/与XX流程图一致/依据XX梳理」→ 🔴",
+      "source": "prd-structure-checker §4.5"
+    },
+    {
+      "id": "PRD-STRUCT-008",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "流程图防篡改：必须原样引用权威源，禁止 AI 自行简化/重绘/省略节点或泳道",
+      "must": ["流程图章节顶部标注 📎 权威来源（含线上链接）", "含约束声明「⚠️ 禁止在PRD中自行简化/重绘/修改流程图。AI无权擅自改动」", "若权威源含多张图须全部内嵌或链接，不得只选简化版"],
+      "judge": "有SVG无权威来源引用 / 引用coupon-flow但无泳道关键词 → 🔴",
+      "source": "prd-structure-checker §4.13"
+    },
+    {
+      "id": "PRD-STRUCT-009",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "图文一致性：生成流程图/范围图/状态机后必须回读图内文字与正文逐条比对",
+      "must": ["流程图节点≡正文主流程，不含正文未定义功能", "影响范围图依赖≡正文数据层/第三方依赖", "状态枚举≡真实接口文档枚举值（禁假设「违规下播/回放」等接口无的值）", "图中字段/概念≡正文已定义"],
+      "source": "prd-structure-checker §4.4"
+    },
+    {
+      "id": "PRD-STRUCT-010",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "状态机完整性：状态转换表须有状态守卫与业务前置条件",
+      "judge": ["🔴 宽泛起始状态（任意→删除/任意→下架）缺状态守卫", "🔴 破坏性操作前置仅写「确认弹窗」缺业务前置（无已发放券/无关联活动/先下架）", "🔴 循环/同态转换（A→操作→A）疑似写反", "🔴 原型操作列缺状态变更按钮（如下架/启用/编辑）致UI无法执行中间态", "🟡 未定义完整状态枚举 / 子实体状态机仅为<80字未扩展为表"],
+      "self_check": ["原型操作列是否含状态机所有状态变更操作", "破坏性操作是否有业务级前置条件", "状态枚举是否完整（含边界态）", "原型每个操作按钮是否有关联逐步逻辑（含异常+校验文案）"],
+      "source": "prd-structure-checker §4.6"
+    },
+    {
+      "id": "PRD-STRUCT-011",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "功能范围标注：§四 每个功能点必须标 已有-沿用 / 本期新增 / 本期改动",
+      "must": ["已有-沿用：仅写「沿用现有功能。」禁止展开字段表/按钮表/逐步逻辑", "本期新增/改动：才逐功能点详写", "平台端/商家端是独立后台，各自原生功能UI无需对比统一", "删除/下架等破坏性操作若已有功能同样仅标沿用，仅当本期新增规则才补述"],
+      "judge": "§四 下某功能点（h3/h4）无任何范围标注 → 🔴须补标；标沿用却展大段逻辑 → 🟡冗余压缩",
+      "source": "prd-structure-checker §4.7"
+    },
+    {
+      "id": "PRD-STRUCT-012",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "待确认卫生 + 状态机前后矛盾：待确认项不是甩矛盾给评审的容器",
+      "forbid": ["待确认项与正文「设计如此」决策冲突（如已裁定「下架即终态」又提「编辑能否变相上架」待确认）", "就已有-沿用功能的既有核心行为提「是否允许」类待确认", "状态机同状态既声明「无编辑」又保留「编辑」行 → 直接删编辑行"],
+      "source": "prd-structure-checker §4.9"
+    },
+    {
+      "id": "PRD-STRUCT-013",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "矩阵表（列≥4且短标记单元格≥50%）必须用 SVG 重绘，HTML <table> 在 GitHub Pages 渲染必错位",
+      "judge": "列数≥4 且 ✓/—/已有功能 类短标记占比≥50% → 🔴矩阵表，必须SVG",
+      "must": ["用 <svg> 重绘：每单元格=定位 <rect>（绿✓/灰—/红已有功能）+ <text> 居中", "viewBox + 列x数组 + 行y数组，先填充rect→表头背景→网格线→文字"],
+      "note": "状态明细表/字段表长文本为主→占比<50%→不告警，HTML渲染正常",
+      "source": "prd-structure-checker §4.12"
+    },
+    {
+      "id": "PRD-STRUCT-014",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "表格 CSS 视觉错位检测：长文字<td>撑爆列宽",
+      "judge": ["🟡 <td>含<br>+长文(>12字)撑列风险", "🔴 <table>缺 table-layout:fixed 且存长内容td → 高错位风险", "🟡 单个<td>纯文本>40字"],
+      "fix": "全局加 table-layout:fixed + th,td{word-break:break-all;overflow-wrap:break-word}；缩短长注释",
+      "source": "prd-structure-checker §4.11"
+    },
+    {
+      "id": "PRD-STRUCT-015",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "冗余 Meta 框自动删除：已闭环 warn 框 / 写给AI的note说明框",
+      "judge": ["class=\"warn\" 框含已闭环标记(✅已解决/设计如此/已确认方案)且无未闭环 → 🔴删除", "class=\"note\"/蓝底框命中≥2个meta关键词(📎权威来源/禁止自行/AI无权/本节引自) → 🔴删除"],
+      "must": ["两类均直接删除整个div块，不问用户", "合法保留：含真正未闭环项（接口名待确认/埋点引用说明）"],
+      "source": "prd-structure-checker §4.14"
+    },
+    {
+      "id": "PRD-STRUCT-016",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "原型示意必须嵌入 <img> 截图（文件存在+样式规范+alt），禁纯文字链接",
+      "judge": ["① 文件存在性 os.path.isfile → 缺失🔴（线上404）", "② style含 max-width+border → 缺🟡", "③ 含 alt=\"\" → 缺🟡"],
+      "template": "<img src=\"coupon-prd-assets/xxx.png\" style=\"max-width:100%;max-height:800px;border:1px solid #e0e0e0;border-radius:8px;object-fit:contain;\" alt=\"xxx端原型\">",
+      "must": ["截图文件须 git push 到 GitHub 仓库", "原型示意位置出现<a href>链接但±300字无<img> → 🔴"],
+      "source": "prd-structure-checker §4.15/§4.16"
+    },
+    {
+      "id": "PRD-STRUCT-017",
+      "severity": "REQUIRED",
+      "module": "structure",
+      "rule": "原型截图统一尺寸 1440×900（不再按终端分尺寸）",
+      "judge": "读PNG IHDR宽高应为1440×900；非此 → 🟡",
+      "fix": "msedge --headless --screenshot=out.png --window-size=1440,900 原型文件.html",
+      "source": "prd-structure-checker §4.19"
+    },
+    {
+      "id": "PRD-STRUCT-018",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "截图重复检测：多张图 md5 完全相同会被 Word/钉钉去重丢图",
+      "judge": "所有 <img src> 本地PNG按md5分组，组内≥2 → 🔴",
+      "fix": "重截前确认视图已切换（注入 <script>go('VIEW')</script> + --virtual-time-budget=2500），截后 md5sum 比对与首页/其它图不同",
+      "source": "prd-structure-checker §4.30"
+    },
+    {
+      "id": "PRD-STRUCT-019",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "截图视图不匹配：md5唯一但显示错误视图（如商品详情下贴的是首页图）",
+      "judge": "有 prototype_screenshot_map.json 时 view 指定 p_c5 但 md5==首页基准 → 🔴；文件名含 detail/product 但与其他图尺寸偏差<5% → 🟡",
+      "fix": "原型副本 </body> 前注入 setTimeout(go('VIEW'),800) + 绝对路径输出 + virtual-time-budget=3000，截后验 md5≠首页基准",
+      "source": "prd-structure-checker §4.31"
+    },
+    {
+      "id": "PRD-STRUCT-020",
+      "severity": "REQUIRED",
+      "module": "structure",
+      "rule": "改原型必须同步改 PRD（强制联动），原型与PRD逐步失配是漏改隐患",
+      "must": ["改任一原型文件须在本轮同时改对应PRD相同章节（列表字段表/表单字段表/按钮表/功能逻辑）", "同目录无PRD时跳过但须说明「本期无PRD原型改动未同步」并登记待办", "用户说「先只改原型」允许跳过但须登记下轮优先补回"],
+      "self_check": ["原型<th>增删改名→PRD字段表首列同步", "原型按钮改名→PRD按钮表同步", "原型表单字段改→PRD表单字段表同步", "双端都改→商家端引用章节仍成立"],
+      "source": "prd-structure-checker §4.32"
+    },
+    {
+      "id": "PRD-STRUCT-021",
+      "severity": "REQUIRED",
+      "module": "structure",
+      "rule": "原型功能必须写进 PRD：原型做的每个业务功能（按钮/弹窗/表单/交互）PRD §四 须有对应描述",
+      "judge": "🟡（非阻断）原型业务功能在PRD §四完全无对应 → 疑似漏写，需人工核对",
+      "scope": "搜索PRD同目录+父目录内文件名含「原型」HTML，提取<button>/onclick/弹窗标题/<label>，与PRD比对；排除导航chrome与纯UI动词",
+      "source": "prd-structure-checker §4.33"
+    },
+    {
+      "id": "PRD-STRUCT-022",
+      "severity": "ADVISED",
+      "module": "structure",
+      "rule": "章节编号跳号/空槽是有意管理，checker 严禁据此报「章节缺失/编号不连续」",
+      "must": ["阶段1仅校验一~九顶层板块存在性，阶段2仅校验功能点子节2.1~2.7齐备，二者均不校验编号连续性", "凡子章节跳号（如4.3预留4.3.1/4.3.3、关联需求删10.5/10.6不补号）一律视为有意", "看到跳号先假设有意，不主动补号或报缺失，除非用户明确说漏了一节"],
+      "source": "prd-structure-checker §4.34"
+    },
+    {
+      "id": "PRD-STRUCT-023",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "二期待办仅入 PRD §十一，禁止写入项目记忆（MEMORY.md / 每日流水）",
+      "must": ["更新记忆时内容属「二期/下期/未来规划」一律只更新PRD §十一，不写MEMORY.md", "项目记忆只存跨会话长期稳定规则（端口基线/优惠券强规则），不存会随版本过期的二期待办"],
+      "judge": "（人工纪律+提示词约束）agent在记忆中复述二期待办清单即违规",
+      "source": "prd-structure-checker §4.35 / V2.0定版声明"
+    },
+    {
+      "id": "PRD-STRUCT-024",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "数据看板/多维度列表页须按维度输出完整字段表 + 聚合算法",
+      "judge": ["🔴 有数据看板但缺≥1个维度Tab完整字段表（含聚合算法列）", "🔴 字段表「聚合算法」列为空或仅写「取《XX表》」（无COUNT/SUM/GROUP BY）", "🟡 有派生字段（率/比/均值）未写除零/边界处理"],
+      "must": ["每个维度Tab独立列表字段表：字段名称/聚合算法(公式)/数据来源/排序筛选支持", "派生字段精确公式+除零处理；合计行规则（求和/均值/仅展示）", "全局筛选对各维度影响说明"],
+      "source": "prd-structure-checker §4.23"
+    },
+    {
+      "id": "PRD-STRUCT-025",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "截图列与字段表逐列对齐校验",
+      "judge": ["🔴 列数不一致/列名不匹配/列顺序错乱", "🔴 截图有字段表无 / 字段表有截图无（除非标「截图待更新」）", "🟡 筛选条件与查询条件表不一致"],
+      "must": ["以原型截图为准修改PRD字段表逐列对应", "截图过时须标「⚠️截图为旧版以文字字段表为准」并确认是否重截", "每字段补全名称+说明+数据来源+备注"],
+      "source": "prd-structure-checker §4.24"
+    },
+    {
+      "id": "PRD-STRUCT-026",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "已有-沿用功能点禁止冗余赘述：<p>段落只允许写「沿用现有功能。」",
+      "forbid": ["按钮枚举（列表/查询/新建/查看/删除/下架）", "原型链接（详见原型XXX.html）", "上下文补充（本期仅补充：XXX）"],
+      "judge": "去除「沿用现有功能。」后段落仍有>10字符有效内容 → 🔴",
+      "fix": "整段替换为 <p>沿用现有功能。</p>",
+      "source": "prd-structure-checker §4.18"
+    },
+    {
+      "id": "PRD-STRUCT-027",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "多视图必须分图截取（列表+新建表单/弹窗/详情 各独立一张）",
+      "judge": ["h4标题含 +／、 但 <img>数<2 → 🔴", "节内≥2个视图类<p><b>子标题但<img>数<子标题数 → 🔴"],
+      "must": ["P2列表 + D3新建 → 2张图", "弹窗/抽屉单独截不与父页混", "详情页单独截不与列表混"],
+      "source": "prd-structure-checker §4.26"
+    },
+    {
+      "id": "PRD-STRUCT-028",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "表格冗余验证备注删除：绿色✅ span 与括号内验证备注",
+      "judge": ["<span style=\"color:#2ba245;font-size:11px\">✅ ...</span> → 🔴", "（截图验证：…）/（方案确认：…）括号内备注 → 🟡"],
+      "fix": "直接删除整段span；如单元格无其它内容保留按钮/位置描述本身",
+      "source": "prd-structure-checker §4.27"
+    },
+    {
+      "id": "PRD-STRUCT-029",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "弹窗/弹框类功能点必须独立截图（标题含 弹窗/弹框/Modal/Popup/对话框/抽屉/overlay/dialog）",
+      "judge": "h4到下一h4间无<img> → 🔴",
+      "exclude": "标题同时含 差异/对比/规范/外壳/diff/入口/示意/总览/引用/说明 → 视为引用跳过",
+      "fix": "定位弹窗触发入口 → 临时快照强制弹窗显示 → Edge headless 1440×900 截 → 插入4.x.x.1",
+      "source": "prd-structure-checker §4.29"
+    },
+    {
+      "id": "PRD-STRUCT-030",
+      "severity": "REQUIRED",
+      "module": "structure",
+      "rule": "埋点必要性自检：每个候选事件须能答「为什么必须客户端埋点」",
+      "forbid": ["纯页面/组件内交互（Tab切换/折叠/滚动）无业务分析价值 → 不埋", "结果类/汇总类（核销结果/领取结果/支付结果）后端业务表已落库可直接统计 → 不重复埋"],
+      "must": ["仅埋用户行为意图且后端无法直接还原的事件（点击领券/点击购买/弹窗曝光关闭/进入某页）"],
+      "source": "prd-structure-checker §4.8"
+    },
+    {
+      "id": "PRD-STRUCT-031",
+      "severity": "REQUIRED",
+      "module": "structure",
+      "rule": "Loop 自动修复：能直接修的问题不要打断用户确认，直接改",
+      "auto_fix": ["待确认项残留（可基于裁定直接决定）", "状态机宽泛起始状态误报（非状态机上下文关键词）", "流程图覆盖度不足（补全客户端入口节点）", "表格中⚠️待确认（已有功能沿用/不开放类决策）", "前后矛盾（同事实两处冲突）", "表格CSS错位（加table-layout:fixed）", "矩阵表（改SVG）", "redundant meta框", "缺图（--auto-fill）", "截图尺寸/重复/视图不匹配"],
+      "need_confirm": ["业务决策类（功能取舍拍板）", "KPI阈值/SLA", "API接口契约", "外部依赖确认"],
+      "flow": "跑check_prd.py → 逐条审阶段4 → 适用范围内直接改PRD并注 auto-fix:{问题} → 复跑loop → 推GitHub",
+      "source": "prd-structure-checker §4.10"
+    },
+    {
+      "id": "PRD-STRUCT-032",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "功能点 tag 与业务梳理 MD 状态矛盾须修正",
+      "judge": "PRD标「已有-沿用」但同目录业务梳理MD（含需求梳理/线下定稿/范围确认/功能生命周期关键词）明确写「暂无/需新增/仅xx有」→ 🔴",
+      "fix": "改为本期新增 + 按原型补详细FR",
+      "source": "prd-structure-checker §4.20/§4.24"
+    },
+    {
+      "id": "PRD-STRUCT-033",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "非功能性需求章节冗余说明框删除",
+      "judge": "§五~§九出现 <div class=\"warn/note\"> 内容>40字且含操作指引关键词（注意/处理要求/确保/须按/禁止凭空）→ 🔴",
+      "fix": "直接删除；PRD只写需求说明不写开发/测试执行规范",
+      "source": "prd-structure-checker §4.21"
+    },
+    {
+      "id": "PRD-STRUCT-034",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "范围外功能/概念泄漏检测（scope_keywords）",
+      "judge": "PRD正文出现未纳入本期范围的功能名/业务概念/约束规则 → 🔴",
+      "fix": "全部删除该概念所有引用；如确实要做先更新§三范围表再加入功能说明",
+      "source": "prd-structure-checker §4.22"
+    },
+    {
+      "id": "PRD-STRUCT-035",
+      "severity": "BLOCKER",
+      "module": "structure",
+      "rule": "新增/改动功能缺原型截图阻断（tag 升级须同步截图）",
+      "judge": ["🚨 后台独立页面（标题含详情/新建/编辑/列表/看板/查询/管理 或h3为平台/商家端）h4内无<img> → 阻断", "🟡 客户端子功能无独立图但h3顶部有总览图 → 提醒可忽略", "豁免：标题含 差异说明/状态机/流程/说明/附录"],
+      "must": ["tag从已有-沿用升级为新增/改动时除补FR外必须同步补<img>", "列表页和表单页各一张"],
+      "source": "prd-structure-checker §4.25/§4.28"
+    },
+    {
+      "id": "PRD-DETAIL-001",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "单页输出只含 §四 功能需求详情，结构严格按团队260715 docx 模板",
+      "must": ["h1：页面名+「— 需求详情」", "h2：§四 功能需求详情", "h3：终端名+范围tag", "h4：页面名 + 两句总述（需求影响范围+涉及终端）"],
+      "forbid": ["自创「功能说明/显示位置/权限/前置条件/操作逻辑」作为2.1~2.5（这些是2.2子内容或额外小节）"],
+      "source": "prd-single-page-detail"
+    },
+    {
+      "id": "PRD-DETAIL-002",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "2.1 页面原型与交互示意：截图必须放本节开头首屏可见位置，用 <img> 内嵌",
+      "forbid": ["截图放在2.10或末尾", "用流程SVG充当界面截图", "用<a href>文字链接替代<img>"],
+      "source": "prd-single-page-detail / checklist"
+    },
+    {
+      "id": "PRD-DETAIL-003",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "章节按 2.1→2.7 顺序，不得颠倒",
+      "order": ["2.1 页面原型与交互示意", "2.2 详细逻辑规则（界面与展示规则+业务逻辑与边界条件）", "2.3 列表字段表（列表页）", "2.4 功能按钮总表+每按钮独立小节（有按钮页）", "2.5 编辑/新增表单（表单页）", "2.6 查询条件（列表页）", "2.7 数据来源字段级（凡有字段必写）"],
+      "optional": ["2.8 计算公式与数据演练", "2.9 权限", "2.10 前置条件", "2.11 接口草稿", "2.12 待确认项汇总"],
+      "source": "prd-single-page-detail"
+    },
+    {
+      "id": "PRD-DETAIL-004",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "列表字段表表头必须为：字段名称 / 需求说明 / 备注",
+      "forbid": ["表头多出「排序/合计」列（排序/合计规则用note块说明，不混入表头）", "表头缺「备注」列"],
+      "must": ["每字段有需求说明", "备注列写排序/分页/合计/唯一性规则"],
+      "source": "prd-single-page-detail / checklist"
+    },
+    {
+      "id": "PRD-DETAIL-005",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "字段级数据来源必须逐字段写「取《XX 表》.XX 字段」",
+      "forbid": ["只写表名不写字段", "计算字段不写公式"],
+      "must": ["表头：字段名称 / 取值逻辑说明", "每个展示字段都有来源", "计算字段写清公式"],
+      "source": "prd-single-page-detail / checklist"
+    },
+    {
+      "id": "PRD-DETAIL-006",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "所有不确定处用「⚠️ 待确认 @干系人」占位，末尾统一汇总待确认项",
+      "must": ["用户确认后修订为落定内容", "全部确认后状态改为「✅ 定稿」"],
+      "source": "prd-single-page-detail / checklist"
+    },
+    {
+      "id": "PRD-DETAIL-007",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "禁用流程 SVG 充当界面截图",
+      "forbid": ["用流程图/泳道图替代原型界面截图放进2.1"],
+      "source": "prd-single-page-detail 格式红线"
+    },
+    {
+      "id": "PRD-DETAIL-008",
+      "severity": "BLOCKER",
+      "module": "detail",
+      "rule": "功能按钮总表 + 每按钮独立小节，含四要素",
+      "must": ["总表表头：功能名称/功能说明/备注", "每按钮独立小节含：功能说明/显示位置/权限/前置条件/功能实现", "功能实现含逐步操作逻辑+异常分支+校验提示文案"],
+      "source": "prd-single-page-detail / checklist"
+    },
+    {
+      "id": "PRD-DETAIL-009",
+      "severity": "REQUIRED",
+      "module": "detail",
+      "rule": "编辑/新增表单（2.5）须写清输入限制与计算公式",
+      "must": ["表头：区域/字段/功能逻辑说明/备注", "每字段写默认显示/隐藏、可编辑/不可编辑", "每字段输入限制：必填/类型/长度/小数位", "下拉选项写取值来源", "计算公式单独列出+数据演练"],
+      "source": "prd-single-page-detail / checklist"
+    },
+    {
+      "id": "PRD-DIFF-001",
+      "severity": "REQUIRED",
+      "module": "diff",
+      "rule": "docx 提取用预装 venv（Windows 版 python 不接受 /c/ 路径，参数用 C:/ 或 C:\\）",
+      "env": "C:\\Users\\13364\\.workbuddy\\binaries\\python\\envs\\docx\\Scripts\\python.exe（已装 python-docx/beautifulsoup4/lxml）",
+      "source": "prd-diff"
+    },
+    {
+      "id": "PRD-DIFF-002",
+      "severity": "REQUIRED",
+      "module": "diff",
+      "rule": "定版 vs 线上 五步 diff 流程",
+      "steps": ["提取定版docx文本+大纲（含修订记录）", "提取线上HTML章节结构（h1~h6+id）", "逐项diff按章节编号对齐，标 🔴缺失/🟡单薄/🟢一致", "输出 |位置|状态|定版内容|线上现状|需补动作| 表 + 执行清单", "修复+推送+raw验证新内容命中"],
+      "source": "prd-diff"
+    },
+    {
+      "id": "PRD-DIFF-003",
+      "severity": "BLOCKER",
+      "module": "diff",
+      "rule": "差距报告禁止臆造定版内容——只比对不补全",
+      "forbid": ["在报告里凭空编定版章节内容", "缺失内容由用户确认或标「待确认」而非自填"],
+      "source": "prd-diff 红线"
+    },
+    {
+      "id": "PRD-DIFF-004",
+      "severity": "REQUIRED",
+      "module": "diff",
+      "rule": "编号重映射后须验证引用一致性再推送",
+      "must": ["用Python正则脚本全局替换（如 4\\.3\\.(\\d)(\\.\\d+)?）", "改完重新Read验证未破坏其它引用再写版本号", "推GitHub用proto-push，raw验证新内容命中"],
+      "forbid": ["编号重映射后不验证引用一致性就推送（锚点/交叉引用断裂）"],
+      "source": "prd-diff 红线"
+    },
+    {
+      "id": "PRD-DIFF-005",
+      "severity": "ADVISED",
+      "module": "diff",
+      "rule": "章节跳号/预留空槽是有意决策，diff 时不得据此报「缺失」",
+      "must": ["除非用户明确说漏了一节，否则 §4.34 跳号豁免同样适用于diff"],
+      "source": "prd-diff 红线"
+    },
+    {
+      "id": "PRD-SHOT-001",
+      "severity": "BLOCKER",
+      "module": "screenshot",
+      "rule": "禁止用 <iframe> 加载原型再截图（file://跨域使 contentDocument 取不到、触发脚本不执行）",
+      "must": ["把触发脚本注入原型HTML临时副本再直接截图，彻底避开跨域"],
+      "source": "prd-screenshot-sync 强约束1"
+    },
+    {
+      "id": "PRD-SHOT-002",
+      "severity": "BLOCKER",
+      "module": "screenshot",
+      "rule": "截图必须加 --virtual-time-budget=3000",
+      "why": "Edge --screenshot 在 load 事件即截，setTimeout 里的触发弹窗/切视图还没跑就被截，所有图回初始态",
+      "source": "prd-screenshot-sync 强约束2"
+    },
+    {
+      "id": "PRD-SHOT-003",
+      "severity": "BLOCKER",
+      "module": "screenshot",
+      "rule": "雷同自检：截完用 PIL 看 distinct_colors / top_color 占比",
+      "judge": "两张「不同视图」字节/颜色分布完全一致 → 触发器没生效，立刻告警停下",
+      "source": "prd-screenshot-sync 强约束3"
+    },
+    {
+      "id": "PRD-SHOT-004",
+      "severity": "REQUIRED",
+      "module": "screenshot",
+      "rule": "MD5/size diff：只替换真正变化的图，打印 [NEW/CHANGED/unchanged]",
+      "why": "方便确认到底哪几张过期",
+      "source": "prd-screenshot-sync 强约束4"
+    },
+    {
+      "id": "PRD-SHOT-005",
+      "severity": "BLOCKER",
+      "module": "screenshot",
+      "rule": "推 GitHub 用 Python 生成 body.json + gh api --input，绝不用 printf \"$(cat b64)\" 传超长 base64",
+      "why": "Windows Git Bash 会静默截断；推送后 curl raw.githubusercontent.com 回读验证 HTTP 200",
+      "source": "prd-screenshot-sync 强约束5"
+    },
+    {
+      "id": "PRD-SHOT-006",
+      "severity": "REQUIRED",
+      "module": "screenshot",
+      "rule": "截图换完后重生成 Word（如有），确保 Word 内嵌的也是新版图",
+      "source": "prd-screenshot-sync 强约束6"
+    }
+  ],
+  "checklist": {
+    "name": "PRD 交付前自检 Loop（写/改/审 PRD 后必须 loop，直到全部通过）",
+    "precondition": "先跑 structure 模块 check_prd.py 且零不通过，再做人工逐项核对；阻断项不通过一律禁止定稿",
+    "items": [
+      {"id": "C01", "check": "一~九 必含板块齐全（缺失即不通过）", "ref": "PRD-STRUCT-001"},
+      {"id": "C02", "check": "§四 每页含 X.1 原型截图 + X.2 详细逻辑，非扁平摘要", "ref": "PRD-STRUCT-002"},
+      {"id": "C03", "check": "每个功能点有范围标注（已有-沿用/本期新增/本期改动）", "ref": "PRD-STRUCT-011"},
+      {"id": "C04", "check": "已有-沿用功能点仅一句「沿用现有功能。」无冗余", "ref": "PRD-STRUCT-026"},
+      {"id": "C05", "check": "不确定性数据已占位或反问，无臆测数值", "ref": "PRD-STRUCT-003"},
+      {"id": "C06", "check": "待确认项已汇总且无悬空/无与设计矛盾", "ref": "PRD-STRUCT-005/012"},
+      {"id": "C07", "check": "范围外红线词均有「不涉及」豁免声明", "ref": "PRD-STRUCT-004"},
+      {"id": "C08", "check": "无本期范围外功能/概念泄漏", "ref": "PRD-STRUCT-034"},
+      {"id": "C09", "check": "埋点链接引用v2.3，无5列简化版", "ref": "PRD-STRUCT-006"},
+      {"id": "C10", "check": "业务流程图有已梳理泳道图+权威来源标注，未自行简化", "ref": "PRD-STRUCT-007/008"},
+      {"id": "C11", "check": "状态机无宽泛起始状态/循环同态，原型操作列含全部状态变更按钮", "ref": "PRD-STRUCT-010"},
+      {"id": "C12", "check": "矩阵表已用SVG（无HTML table列错位）", "ref": "PRD-STRUCT-013"},
+      {"id": "C13", "check": "表格无CSS视觉错位（table-layout:fixed）", "ref": "PRD-STRUCT-014"},
+      {"id": "C14", "check": "无冗余meta框/验证备注（绿色✅ span）", "ref": "PRD-STRUCT-015/028"},
+      {"id": "C15", "check": "原型示意均为<img>且文件存在+样式规范+alt", "ref": "PRD-STRUCT-016"},
+      {"id": "C16", "check": "截图统一1440×900，无md5重复，视图匹配功能点", "ref": "PRD-STRUCT-017/018/019"},
+      {"id": "C17", "check": "截图列与字段表逐列对齐，多视图/弹窗已分图", "ref": "PRD-STRUCT-025/027/029"},
+      {"id": "C18", "check": "数据看板每个维度Tab有完整字段表+聚合算法", "ref": "PRD-STRUCT-024"},
+      {"id": "C19", "check": "改原型已同步改PRD，原型功能已写进PRD", "ref": "PRD-STRUCT-020/021"},
+      {"id": "C20", "check": "二期待办仅在PRD §十一，未写项目记忆", "ref": "PRD-STRUCT-023"},
+      {"id": "C21", "check": "章节跳号视为有意，未误报缺失", "ref": "PRD-STRUCT-022"},
+      {"id": "C22", "check": "单页输出：2.1截图置顶、2.1~2.7顺序、字段表表头规范、数据来源写表名", "ref": "PRD-DETAIL-002/003/004/005"}
+    ]
+  },
+  "related": {
+    "requirement-workflow": "本 suite 是 requirement-workflow Step 4「输出 PRD」的执行约束",
+    "proto-suite": "原型定稿后 PRD 引用其截图，须过本 suite 结构排查",
+    "delivery-suite": "PRD 定稿后由 delivery-suite 推送 GitHub Pages + 转 Word"
+  }
+}
