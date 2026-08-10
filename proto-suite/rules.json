@@ -1,8 +1,12 @@
 {
   "skill": "proto-suite",
   "version": "1.0.0",
-  "updated": "2026-08-03",
-  "merged_from": ["prototype-ux-constraints", "flat-page-layout", "flat-prototype-modao"],
+  "updated": "2026-08-08",
+  "merged_from": [
+    "prototype-ux-constraints",
+    "flat-page-layout",
+    "flat-prototype-modao"
+  ],
   "severity_semantics": {
     "BLOCKER": "违反即事故，禁止交付，必须回头修",
     "REQUIRED": "必须执行，遗漏须补做后才能交付",
@@ -12,14 +16,31 @@
     {
       "id": "ux",
       "name": "交互原型 UX 约束",
-      "triggers": ["画原型", "改原型", "前端原型", "后台原型", "App原型", "小程序原型", "H5原型"],
+      "triggers": [
+        "画原型",
+        "改原型",
+        "前端原型",
+        "后台原型",
+        "App原型",
+        "小程序原型",
+        "H5原型"
+      ],
       "scope": "生成/修改任何含前端交互的原型（H5 / App / 小程序 / 平台端后台 / 商家端后台）时强制加载",
-      "rule_prefixes": ["PROTO-TXT", "PROTO-STY", "PROTO-STR"]
+      "rule_prefixes": [
+        "PROTO-TXT",
+        "PROTO-STY",
+        "PROTO-STR"
+      ]
     },
     {
       "id": "smoke",
       "name": "自动化冒烟测试（硬门禁）",
-      "triggers": ["冒烟", "smoke", "原型自检", "交付前检查"],
+      "triggers": [
+        "冒烟",
+        "smoke",
+        "原型自检",
+        "交付前检查"
+      ],
       "scope": "任何原型交付前必跑，退出码非 0 禁止交付",
       "runner": {
         "node": "C:\\Users\\13364\\.workbuddy\\binaries\\node\\versions\\22.22.2\\node.exe",
@@ -27,7 +48,11 @@
         "backend_script": "{SKILL_DIR}/references/proto_smoke.js",
         "client_script": "{SKILL_DIR}/references/proto_smoke_client.js",
         "cmd": "NODE_PATH=\"<node_path>\" <node> <script> <原型.html>",
-        "exit_codes": {"0": "全部通过，可交付", "1": "有失败项，禁止交付", "2": "参数错误"}
+        "exit_codes": {
+          "0": "全部通过，可交付",
+          "1": "有失败项，禁止交付",
+          "2": "参数错误"
+        }
       },
       "checks": {
         "A": "视图容器归属：所有 view* 独立页/弹窗必须在 <main> 内（后台）或 .phone 内（C端）",
@@ -37,12 +62,23 @@
         "E": "JS 运行期错误汇总（virtualConsole 捕获，已 shim confirm/toast/$）",
         "F": "表单选项去重"
       },
-      "rule_prefixes": ["PROTO-SMK"]
+      "rule_prefixes": [
+        "PROTO-SMK"
+      ]
     },
     {
       "id": "flat",
       "name": "平铺产出（三种模式，必须先选定）",
-      "triggers": ["平铺", "页面平铺", "平铺交互", "flat layout", "原型平铺", "评审板", "墨刀", "可复制墨刀"],
+      "triggers": [
+        "平铺",
+        "页面平铺",
+        "平铺交互",
+        "flat layout",
+        "原型平铺",
+        "评审板",
+        "墨刀",
+        "可复制墨刀"
+      ],
       "mode_selection": {
         "why": "⚠️ 合并前 prototype-ux-constraints §13 与 flat-page-layout 对「查看详情按钮」的规定互相矛盾（前者要求必须有，后者列为红线禁止）。根因是二者其实是不同产物。动手前必须先确定 mode，不得混用。",
         "how": "若用户未明确说明产出哪种，用 AskUserQuestion 确认后再画"
@@ -52,8 +88,18 @@
           "id": "review-board",
           "name": "评审板（带 Modal 详情）",
           "when": "用户要「评审板 / 平铺交互 HTML / 给评审看的汇总页」，需要点开看 PRD 说明",
-          "card": ["截图 <img>", "页面名称（简短，如「C2 我的优惠券」）", "「查看详情」按钮 → 弹 Modal 展示完整 PRD 文字"],
-          "card_forbid": ["文字说明/摘要段落", "页面列表/导航清单", "PRD 字段表/逻辑规则直接铺在卡片上", "侧栏/分组说明文字块", "复制原型自带 .side 侧栏导航文字"],
+          "card": [
+            "截图 <img>",
+            "页面名称（简短，如「C2 我的优惠券」）",
+            "「查看详情」按钮 → 弹 Modal 展示完整 PRD 文字"
+          ],
+          "card_forbid": [
+            "文字说明/摘要段落",
+            "页面列表/导航清单",
+            "PRD 字段表/逻辑规则直接铺在卡片上",
+            "侧栏/分组说明文字块",
+            "复制原型自带 .side 侧栏导航文字"
+          ],
           "layout": "两大区（C端用户侧 / 后台管理侧）视觉分隔；区内卡片 flex-wrap 横排等宽等高；顶部仅标题+总数+搜索框不超过一行"
         },
         {
@@ -61,7 +107,12 @@
           "name": "跳转流平铺（纯截图无框）",
           "when": "用户要「按页面跳转逻辑排列 / 横向分列平铺 / 输出平铺图」，纯看图不点开",
           "layout": "同一导航组的「列表页→详情页→弹窗」上下堆叠成一列；不同导航组横向并列成列，超屏可左右滚动；直接展示原图不做缩略图",
-          "sizes": {"C端列宽": "280px", "B端列宽": "780px", "列间距": "44px（.cols{gap:44px}）", "节点间距": "20px（.node{margin-bottom:20px}）"},
+          "sizes": {
+            "C端列宽": "280px",
+            "B端列宽": "780px",
+            "列间距": "44px（.cols{gap:44px}）",
+            "节点间距": "20px（.node{margin-bottom:20px}）"
+          },
           "data_schema": {
             "SECTIONS": "[{side:'C'|'B', key, name, cols:[{g:'列组名', items:[...]}]}]",
             "item_fields": {
@@ -71,7 +122,10 @@
               "stale": "boolean 截图过旧时 true → 显示橙色「⚠ 截图待更新」徽标"
             }
           },
-          "interaction": ["点击图片全屏放大（半透明黑底+居中大图+点击关闭）", ".cols{overflow-x:auto} 横向滚动"],
+          "interaction": [
+            "点击图片全屏放大（半透明黑底+居中大图+点击关闭）",
+            ".cols{overflow-x:auto} 横向滚动"
+          ],
           "template": "{SKILL_DIR}/references/flat-flow-template.html"
         },
         {
@@ -93,7 +147,24 @@
           "verify": "生成后用 jsdom 跑结构校验：目标节点数 == 手机框数、无 display:none 残留（除刻意隐藏）、弹窗填满视口、复制按钮就位"
         }
       ],
-      "rule_prefixes": ["PROTO-FLAT"]
+      "rule_prefixes": [
+        "PROTO-FLAT"
+      ]
+    },
+    {
+      "id": "shot",
+      "name": "需求调整→PRD 截图重截同步",
+      "triggers": [
+        "重截",
+        "重截图",
+        "重新截图",
+        "重截PRD截图",
+        "改原型后截图"
+      ],
+      "scope": "需求调整改动了任意被 PRD 用 <img src=\"coupon-prd-assets/...\"> 引用的原型视图（P2/D3/列表/详情等）时强制",
+      "rule_prefixes": [
+        "PROTO-SHOT"
+      ]
     }
   ],
   "rules": [
@@ -102,23 +173,42 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "原型页面内禁止任何解释性说明卡片/段落",
-      "forbid": ["「前端拦截说明」", "「规则说明」", "「* 注意」", "「演示：当前…」", "页面角落/右侧/底部的演示说明、状态注释、图例"],
-      "must": ["所有业务规则、异常说明、字段映射放进 PRD", "原型只保留真实界面元素"]
+      "forbid": [
+        "「前端拦截说明」",
+        "「规则说明」",
+        "「* 注意」",
+        "「演示：当前…」",
+        "页面角落/右侧/底部的演示说明、状态注释、图例"
+      ],
+      "must": [
+        "所有业务规则、异常说明、字段映射放进 PRD",
+        "原型只保留真实界面元素"
+      ]
     },
     {
       "id": "PROTO-TXT-002",
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "规格/选项/字段下方禁止写备注",
-      "forbid": ["「后台设置了 xxx」", "「该字段含义是 xxx」", "「仅辅助提示」"]
+      "forbid": [
+        "「后台设置了 xxx」",
+        "「该字段含义是 xxx」",
+        "「仅辅助提示」"
+      ],
+      "exception": "用户明确要求的「字段用途说明」小字（解释字段控制什么/业务含义，如发放端口的用途说明）允许保留，见 PROTO-TXT-008"
     },
     {
       "id": "PROTO-TXT-003",
       "severity": "BLOCKER",
       "module": "ux",
-      "rule": "复选框组/单选组/开关旁禁止写解释性 hint 小字",
-      "forbid": ["「默认全部不选中，即……」", "「勾选后可……」", "「未勾选则……」"],
-      "why": "业务语义属于 PRD，原型只保留选项本身",
+      "rule": "复选框组/单选组/开关旁禁止写解释性 hint 小字（仅限选项选中态描述类，字段用途说明小字例外）",
+      "forbid": [
+        "「默认全部不选中，即……」",
+        "「勾选后可……」",
+        "「未勾选则……」"
+      ],
+      "why": "业务语义属于 PRD，原型只保留选项本身；但字段用途说明（解释控制什么）用户 2026-08-08 裁定允许，见 PROTO-TXT-008",
+      "exception": "用户明确要求的「字段用途说明」小字（解释字段控制什么，非选项选中态描述）允许保留，见 PROTO-TXT-008",
       "source": "用户已确认，后续直接删除无需再问"
     },
     {
@@ -126,8 +216,19 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "禁止在规格按钮/选项标签/价格旁加 tiny 小字限制提示",
-      "forbid": ["🔒限高级", "限高级+", "限VIP", "仅限会员", "会员专享", "仅对高级会员可见", "任何 font-size ≤ 10px 且含「限」「仅限」「专享」「会员可见」「🔒」的标签/角标"],
-      "must": ["购买级别限制只通过后台配置字段（如「购买级别(≥)」下拉）+ 加购/购买时的全局 Toast 表达", "需让用户感知门槛就写进 PRD，不在原型加视觉标签"],
+      "forbid": [
+        "🔒限高级",
+        "限高级+",
+        "限VIP",
+        "仅限会员",
+        "会员专享",
+        "仅对高级会员可见",
+        "任何 font-size ≤ 10px 且含「限」「仅限」「专享」「会员可见」「🔒」的标签/角标"
+      ],
+      "must": [
+        "购买级别限制只通过后台配置字段（如「购买级别(≥)」下拉）+ 加购/购买时的全局 Toast 表达",
+        "需让用户感知门槛就写进 PRD，不在原型加视觉标签"
+      ],
       "source": "用户已确认，后续直接删除无需再问"
     },
     {
@@ -135,8 +236,19 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "禁止「写死 / 不可编辑」类说明文字与徽标",
-      "forbid": ["「写死」", "「不可编辑」", "「固定值」", "「本期不可配置」", "「本期仅支持」", "「无法修改」", ".locknote 黄色提示块（如「⚠ 写死：直播时长」「⚠ 固定：30 分钟」）"],
-      "must": ["不可编辑直接用 readonly / disabled / 置灰样式表达，不附任何文字", "列表里固定值字段直接显示该值即可"],
+      "forbid": [
+        "「写死」",
+        "「不可编辑」",
+        "「固定值」",
+        "「本期不可配置」",
+        "「本期仅支持」",
+        "「无法修改」",
+        ".locknote 黄色提示块（如「⚠ 写死：直播时长」「⚠ 固定：30 分钟」）"
+      ],
+      "must": [
+        "不可编辑直接用 readonly / disabled / 置灰样式表达，不附任何文字",
+        "列表里固定值字段直接显示该值即可"
+      ],
       "exception": "用户在某次需求里明确指示「此处要加说明文字」",
       "check": "grep 写死|不可编辑|固定值|本期不可|本期仅支持|无法修改|locknote 应零命中"
     },
@@ -145,8 +257,13 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "禁止 AI 自行臆造 NEW / 升级 / HOT / BETA 角标，截图中的开发期临时标记也不复制",
-      "forbid": ["AI 自加的 NEW / NEW 切换 / NEW 购买级别 / 升级 / HOT / BETA 角标（即使参考截图里没有也禁止添加）", "复制截图中的 NEW / HOT / BETA / v1.2 等开发期临时角标（上线即消失的运营标记，不是产品功能）"],
-      "must": ["新增/改动点用 PRD 描述 + 面对面沟通表达，绝不画进界面"],
+      "forbid": [
+        "AI 自加的 NEW / NEW 切换 / NEW 购买级别 / 升级 / HOT / BETA 角标（即使参考截图里没有也禁止添加）",
+        "复制截图中的 NEW / HOT / BETA / v1.2 等开发期临时角标（上线即消失的运营标记，不是产品功能）"
+      ],
+      "must": [
+        "新增/改动点用 PRD 描述 + 面对面沟通表达，绝不画进界面"
+      ],
       "exception": "用户明确要求保留截图中的临时角标",
       "check": "grep hl-new|NEW 切换|NEW 购买级别|class=\"hl-new\" 应零命中",
       "case": "商家后台 dashboard 在「商品概况」标题后自加红色 NEW 切换 角标（截图本无），用户原话「这种标识冗余」要求删除并固化",
@@ -161,8 +278,25 @@
         "正则扫描：文本含 限|仅限|专享|会员可见|🔒；文本含 默认全部不选中|默认全部|勾选后|即该|即此|未勾选；类名 .lock|.limit|.vip-tag|.member-only；font-size:9px|10px 附近有限制含义文案",
         "每发现一处向用户展示代码片段询问是否保留（已在 TXT-003/004/005/006 中被用户裁定的模式直接删，不再询问）",
         "用户确认删除的新模式写入记忆（项目 MEMORY.md + ~/.workbuddy/MEMORY.md 跨项目）",
-        "删除后继续 loop 直到扫描无命中"
+        "删除后继续 loop 直到扫描无命中",
+        "用户明确要求的「字段用途说明」小字（解释字段控制什么，见 PROTO-TXT-008）不在删除范围，识别后跳过，勿当作冗余 hint 删除"
       ]
+    },
+    {
+      "id": "PROTO-TXT-008",
+      "severity": "ADVISED",
+      "module": "ux",
+      "rule": "用户明确要求的「字段用途说明」小字（解释字段控制什么/业务含义）允许保留，与冗余 hint 小字区分",
+      "allow": [
+        "字段标签下方一句用途说明，如发放端口字段下：「用于限制活动的发券端口，用户只有在指定端口完成发券条件系统才会给用户发券」",
+        "前提：用户在某次需求里明确要求加该说明，且文案为「字段控制什么/业务用途」而非选项选中态描述"
+      ],
+      "forbid": [
+        "选项选中态描述类小字：默认全部不选中，即…… / 勾选后可…… / 未勾选则…… / 即该 / 即此（仍按 PROTO-TXT-003 禁止）",
+        "AI 自行添加的字段含义备注（未被用户要求）"
+      ],
+      "why": "用户 2026-08-08 裁定：说明小字（解释字段控制什么）有时有用，应保留；仅冗余选项态 hint 仍删",
+      "check": "字段用途说明小字若为用户明确要求则保留；grep 默认全部不选中|勾选后可|未勾选则|即该|即此 仍应零命中（除非属 allowed 用途说明）"
     },
     {
       "id": "PROTO-STY-001",
@@ -173,7 +307,9 @@
         "后台/管理端：优先定位项目内既有后台参考页（如 优惠券体系/live-admin.html）",
         "C端：优先盘点既有同模块 C 端原型（如 live-client.html）作默认基线，但即便有可复用原型也必须显式向用户确认「是否以该基线为准」"
       ],
-      "forbid": ["凭空臆测布局/表格/表单/弹窗样式"],
+      "forbid": [
+        "凭空臆测布局/表格/表单/弹窗样式"
+      ],
       "fallback": "全盘找不到任何参考页/基线时必须主动找用户要样式参考，拿到前不产出原型"
     },
     {
@@ -181,17 +317,32 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "C 端强制首步：动手画任何 App / 小程序 / H5 界面之前，必须先用 AskUserQuestion 确认「是否有 C 端设计稿/参考图？」",
-      "options": ["有稿，我发你", "沿用既有同模块基线（如 live-client.html）", "暂无，先通用风格"],
-      "forbid": ["未得到确认前产出任何 C 端界面（哪怕只是先搭一页占位）"]
+      "options": [
+        "有稿，我发你",
+        "沿用既有同模块基线（如 live-client.html）",
+        "暂无，先通用风格"
+      ],
+      "forbid": [
+        "未得到确认前产出任何 C 端界面（哪怕只是先搭一页占位）"
+      ]
     },
     {
       "id": "PROTO-STY-003",
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "用户提供真实 C 端截图/设计稿时，必须逐字套用其视觉样式，禁止凭通用风格或旧原型记忆臆造",
-      "baseline_items": ["金额区配色（如已领取券金额为绿色 → 不得改成橙/红/灰）", "描边/选中态（如选中券橙色描边 → 不得改成蓝/灰）", "Tab/状态切换高亮（如当前态绿色高亮 → 不得改成其他配色）", "圆角、间距、字号、图标位置"],
-      "must": ["动手前先把截图全部可见样式特征列成基线清单，画完逐条打勾"],
-      "forbid": ["AI 擅自「优化」或「统一」成别的风格"],
+      "baseline_items": [
+        "金额区配色（如已领取券金额为绿色 → 不得改成橙/红/灰）",
+        "描边/选中态（如选中券橙色描边 → 不得改成蓝/灰）",
+        "Tab/状态切换高亮（如当前态绿色高亮 → 不得改成其他配色）",
+        "圆角、间距、字号、图标位置"
+      ],
+      "must": [
+        "动手前先把截图全部可见样式特征列成基线清单，画完逐条打勾"
+      ],
+      "forbid": [
+        "AI 擅自「优化」或「统一」成别的风格"
+      ],
       "exception": "用户明确说「暂无稿 / 先通用风格」时才用既有同模块原型默认风格，且仍需走 PROTO-STY-002 确认",
       "case": "优惠券 App 端「我的优惠券-已领取」用户给了真机截图（绿金额区+橙描边选中+绿 tab），初版却画成灰金额区+蓝描边+灰 tab，完全不符"
     },
@@ -231,8 +382,18 @@
       "severity": "REQUIRED",
       "module": "ux",
       "rule": "禁止为一次提示单独设计新组件样式",
-      "forbid": [".bubble", ".fe-bubble", ".tip", ".hint-pop", "小红标说明", "新模态弹窗样式"],
-      "must": ["复用项目现有全局组件：全局 Toast / 全局弹窗 / 页面已有提示样式", "提示文案极简，只保留必要一句"]
+      "forbid": [
+        ".bubble",
+        ".fe-bubble",
+        ".tip",
+        ".hint-pop",
+        "小红标说明",
+        "新模态弹窗样式"
+      ],
+      "must": [
+        "复用项目现有全局组件：全局 Toast / 全局弹窗 / 页面已有提示样式",
+        "提示文案极简，只保留必要一句"
+      ]
     },
     {
       "id": "PROTO-STY-007",
@@ -245,7 +406,9 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "后台（平台端/商家端）的新增/编辑/详情一律跳转独立页，禁用 Modal 弹窗",
-      "forbid": ["openXxx() + modal-overlay.classList.add('show') 这种弹窗模式实现后台增改查"],
+      "forbid": [
+        "openXxx() + modal-overlay.classList.add('show') 这种弹窗模式实现后台增改查"
+      ],
       "must": [
         "独立页结构：phead（返回按钮+动态标题 h2）+ form-section（表单主体）+ form-actions（取消/返回 + 保存/提交）",
         "列表「新建」按钮 onclick=\"go('xxxNew')\"；「编辑」链接 editXxx(id) → go('xxxEdit') 后 fillXxx(id) 回填；保存后 go('list') 回列表",
@@ -260,7 +423,9 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "所有 viewXxx 独立页/弹窗必须写在布局容器 <main>（后台）或 .phone（C端）内部",
-      "forbid": ["写在 </main> 或内容区闭合标签之外"],
+      "forbid": [
+        "写在 </main> 或内容区闭合标签之外"
+      ],
       "why": "写在容器外会导致点击跳转后整页空白；人工 Loop 的「交互完整性/样式正确性」逐条勾选也捕获不到，曾两次漏过",
       "check": "确认 </main> 位置，所有视图 div 必须在其之前；由 smoke 检查项 [A] 自动拦截"
     },
@@ -269,9 +434,18 @@
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "C 端三态/多状态列表（状态 ≥ 3）必须拆成独立移动端页面，禁止单页 Tab 切换",
-      "example": ["我的优惠券：P_coupon_unused（未使用）/ P_coupon_used（已使用）/ P_coupon_expired（已过期）", "订单：待付款/待发货/已完成/售后"],
-      "must": ["各 375px 宽，各自独立 .page / 独立 go() 目标", "三页共享同一套卡片样式与空态样式", "顶部可用三个可点击标题条（点击跳转到对应独立页，而非页内 Tab 容器切换）"],
-      "forbid": ["把三态塞进一个页面用 display:none/block 切"],
+      "example": [
+        "我的优惠券：P_coupon_unused（未使用）/ P_coupon_used（已使用）/ P_coupon_expired（已过期）",
+        "订单：待付款/待发货/已完成/售后"
+      ],
+      "must": [
+        "各 375px 宽，各自独立 .page / 独立 go() 目标",
+        "三页共享同一套卡片样式与空态样式",
+        "顶部可用三个可点击标题条（点击跳转到对应独立页，而非页内 Tab 容器切换）"
+      ],
+      "forbid": [
+        "把三态塞进一个页面用 display:none/block 切"
+      ],
       "why": "单页 Tab 切三态导致冒烟测试只覆盖第一态、二/三态 DOM 未初始化、真实点击空白或数据错乱；独立页才能被 proto_smoke_client.js 全量覆盖"
     },
     {
@@ -279,7 +453,11 @@
       "severity": "REQUIRED",
       "module": "ux",
       "rule": "后台管理端所有用户手机号固定完整展示 11 位真实号码，不脱敏",
-      "forbid": ["137****9042", "138****0021", "1xx****xxxx 等任何掩码形式"],
+      "forbid": [
+        "137****9042",
+        "138****0021",
+        "1xx****xxxx 等任何掩码形式"
+      ],
       "priority": "高于「为评审者演示脱敏效果」的冲动",
       "check": "grep \\*\\*\\*\\*|脱敏|[0-9]\\*\\*\\*[0-9] 在后台原型/PRD 中应零命中"
     },
@@ -288,23 +466,37 @@
       "severity": "REQUIRED",
       "module": "ux",
       "rule": "购买级别/权限类拦截提示只在实际提交动作时触发",
-      "forbid": ["用户选中规格/切换选项/点击单选时触发任何拦截提示", "提示后把规格置灰或阻断继续切换"],
-      "must": ["只有点击「加入购物车」「立即购买」或实际提交时才提示", "提示后保持规格可选中状态"]
+      "forbid": [
+        "用户选中规格/切换选项/点击单选时触发任何拦截提示",
+        "提示后把规格置灰或阻断继续切换"
+      ],
+      "must": [
+        "只有点击「加入购物车」「立即购买」或实际提交时才提示",
+        "提示后保持规格可选中状态"
+      ]
     },
     {
       "id": "PROTO-STR-006",
       "severity": "REQUIRED",
       "module": "ux",
       "rule": "画新需求原型前先盘点项目内既有同模块原型，能复用就复制改造",
-      "must": ["列出可复用的页面/组件/样式变量", "复用既有类名、Toast/弹窗实现，保持跨原型视觉一致"],
-      "forbid": ["对已存在的交互页面从零重写（只在既有原型缺页时新建）"]
+      "must": [
+        "列出可复用的页面/组件/样式变量",
+        "复用既有类名、Toast/弹窗实现，保持跨原型视觉一致"
+      ],
+      "forbid": [
+        "对已存在的交互页面从零重写（只在既有原型缺页时新建）"
+      ]
     },
     {
       "id": "PROTO-STR-007",
       "severity": "BLOCKER",
       "module": "ux",
       "rule": "重绘页面/套用新模板时，禁止静默删除用户此前已确认存在的字段、列、筛选器、交互",
-      "must": ["新结构与既有字段冲突、或判断某字段「应该去掉」时，必须用 AskUserQuestion 明确列出「以下字段将不再出现：X/Y/Z，是否确认删除？」，得到明确确认后才能删", "用户确认删除的在交付物/记忆中记录「X 字段经用户确认于 YYYY-MM-DD 移除」"],
+      "must": [
+        "新结构与既有字段冲突、或判断某字段「应该去掉」时，必须用 AskUserQuestion 明确列出「以下字段将不再出现：X/Y/Z，是否确认删除？」，得到明确确认后才能删",
+        "用户确认删除的在交付物/记忆中记录「X 字段经用户确认于 YYYY-MM-DD 移除」"
+      ],
       "case": "优惠券管理列表套新模板后「店铺」筛选与「店铺」列被模板结构吞掉，用户事后指出「之前在活动范围里头有个店铺选择这个字段没了」——应在重绘时立即确认而非交付后被挑出"
     },
     {
@@ -333,7 +525,10 @@
       "severity": "REQUIRED",
       "module": "smoke",
       "rule": "按原型类型选对脚本",
-      "must": ["后台（平台端/商家端）原型用 proto_smoke.js（结构基于 <main> + view* 独立页）", "C 端（App/小程序/H5）原型用 proto_smoke_client.js（结构适配 .phone 外壳 + .page 容器切换）"]
+      "must": [
+        "后台（平台端/商家端）原型用 proto_smoke.js（结构基于 <main> + view* 独立页）",
+        "C 端（App/小程序/H5）原型用 proto_smoke_client.js（结构适配 .phone 外壳 + .page 容器切换）"
+      ]
     },
     {
       "id": "PROTO-SMK-003",
@@ -347,7 +542,12 @@
       "severity": "REQUIRED",
       "module": "smoke",
       "rule": "表单选项重复/错漏必须人工核对（冒烟测试的 JS 层面不报错，语法合法）",
-      "check": ["逐个 <select> 列出所有 <option> 文本去重比对", "逐个 radio/checkbox group 核对 label 唯一性", "不得有占位/空值混入正式选项（value 为空但 label 是真实选项名）", "不得遗漏需求明确的选项"],
+      "check": [
+        "逐个 <select> 列出所有 <option> 文本去重比对",
+        "逐个 radio/checkbox group 核对 label 唯一性",
+        "不得有占位/空值混入正式选项（value 为空但 label 是真实选项名）",
+        "不得遗漏需求明确的选项"
+      ],
       "case": "新增券页优惠券类型下拉出现两次「满减券」且缺「满折券」"
     },
     {
@@ -356,7 +556,9 @@
       "module": "flat",
       "rule": "产出平铺前必须先确定 mode（review-board / flat-flow / modao），不得混用两套卡片规范",
       "why": "review-board 要求卡片带「查看详情」按钮，flat-flow 把「查看详情」按钮列为红线禁止——二者是不同产物，混用必然出错",
-      "must": ["用户未明确说明时用 AskUserQuestion 确认 mode"]
+      "must": [
+        "用户未明确说明时用 AskUserQuestion 确认 mode"
+      ]
     },
     {
       "id": "PROTO-FLAT-002",
@@ -364,7 +566,14 @@
       "module": "flat",
       "mode": "flat-flow",
       "rule": "flat-flow 模式六条红线",
-      "forbid": ["缩略图卡片网格（masonry/grid）", "容器框/白底/圆角/shadow（图片直接贴页面，无任何包裹框）", "步骤序号标号（①②③）、圆形数字徽标、箭头↓等装饰", "「查看详情」按钮（直接看图，不点击展开）", "手机壳/重复 Tab 栏（C端截图本身已含手机 UI，不再套一层手机框）", "冗长文字说明（ul 列表 / table 表格 / p 段落描述），只留标题+图"]
+      "forbid": [
+        "缩略图卡片网格（masonry/grid）",
+        "容器框/白底/圆角/shadow（图片直接贴页面，无任何包裹框）",
+        "步骤序号标号（①②③）、圆形数字徽标、箭头↓等装饰",
+        "「查看详情」按钮（直接看图，不点击展开）",
+        "手机壳/重复 Tab 栏（C端截图本身已含手机 UI，不再套一层手机框）",
+        "冗长文字说明（ul 列表 / table 表格 / p 段落描述），只留标题+图"
+      ]
     },
     {
       "id": "PROTO-FLAT-003",
@@ -372,7 +581,13 @@
       "module": "flat",
       "mode": "review-board",
       "rule": "review-board 模式卡片内容严格限定为三件套：截图 + 页面名称 + 「查看详情」按钮，多一不可",
-      "forbid": ["卡片内任何描述性文字、功能说明、范围说明", "页面索引清单（如「H首页 / M商城 / U我的 / C2…」）", "PRD 字段表/逻辑规则直接铺在卡片上（只在 Modal 里展示）", "截图旁大段解释性文本", "复制原型自带 .side 侧栏导航文字"],
+      "forbid": [
+        "卡片内任何描述性文字、功能说明、范围说明",
+        "页面索引清单（如「H首页 / M商城 / U我的 / C2…」）",
+        "PRD 字段表/逻辑规则直接铺在卡片上（只在 Modal 里展示）",
+        "截图旁大段解释性文本",
+        "复制原型自带 .side 侧栏导航文字"
+      ],
       "case": "2026-07-30 评审用户反馈：卡片下方出现大段文字「本期范围（App 端新增）：获券弹窗…/我的优惠券（三态）/确认订单选券与下单核销」+ 页面清单列表 → 全部删除移入 Modal"
     },
     {
@@ -380,7 +595,10 @@
       "severity": "BLOCKER",
       "module": "flat",
       "rule": "静态展示稿（平铺评审板 / 可复制墨刀稿 / 仅截图铺排的 HTML）必须在页面顶部明确标注「无交互 / 静态展示」",
-      "must": ["静态稿中的 Tab/按钮/卡片不绑定任何点击事件（不跳转、不弹窗、不切换），仅作视觉呈现", "需要可交互评审时应交付带 go() 跳转并跑过冒烟测试的真实原型，而非在静态稿上「假装可点」"],
+      "must": [
+        "静态稿中的 Tab/按钮/卡片不绑定任何点击事件（不跳转、不弹窗、不切换），仅作视觉呈现",
+        "需要可交互评审时应交付带 go() 跳转并跑过冒烟测试的真实原型，而非在静态稿上「假装可点」"
+      ],
       "note": "review-board 的「查看详情」弹 Modal 展示 PRD 属合规信息展示，不算可交互原型，但整块平铺稿顶部仍须标注「无交互」"
     },
     {
@@ -395,7 +613,11 @@
         "清理后 waitForTimeout(200)；本张图需要显示弹窗的，在清理完之后再打开并 waitForTimeout(300)"
       ],
       "why": "element.screenshot() 会包含元素背后的 body 背景色；JS 状态（弹窗 display:block）在页面生命周期内持续有效不会自动重置",
-      "other_points": ["只截 .main 内容区（不含侧栏）", "导航用 page.evaluate(fn) 执行原型的 go() 函数", "viewport 1440x900，waitUntil:'networkidle'"],
+      "other_points": [
+        "只截 .main 内容区（不含侧栏）",
+        "导航用 page.evaluate(fn) 执行原型的 go() 函数",
+        "viewport 1440x900，waitUntil:'networkidle'"
+      ],
       "source": "2026-07-30 实际踩坑"
     },
     {
@@ -411,48 +633,199 @@
       "mode": "modao",
       "rule": "墨刀稿只取 <style> 不带 <script>（真·无交互），源里靠 JS 动态生成的内容（滚轮、列表项、计数）必须在 PATCHES/VARIANTS 里静态补值",
       "note": "若某节点在静态 HTML 里不存在（纯 JS 注入），需先在补丁里构造该节点，否则平铺出来是空的"
+    },
+    {
+      "id": "PROTO-SHOT-001",
+      "severity": "REQUIRED",
+      "module": "shot",
+      "rule": "需求调整改动了任意被 PRD 截图引用的原型视图后，必须同步重截该 PRD 截图（覆盖同名 png），禁止留下与最新原型不一致的旧截图",
+      "trigger": "改了某页面/字段，且该页面已被 PRD 用 <img src=\"coupon-prd-assets/*.png\"> 引用",
+      "steps": [
+        "定位 PRD 里引用该视图的 <img src=\"coupon-prd-assets/<name>.png\">",
+        "确定原型中该视图的容器选择器与切页表达式（如 go('send')→#viewSend；go('sendEdit')→#viewSendEdit；P2/D3 这类独立页用其 view 容器）",
+        "多原型、Tab 切换、弹窗、隐藏侧栏等复杂场景用 --manifest（见 cmd）；简单单原型场景可用 --proto/--map",
+        "用 playwright headless chromium 渲染原型并对容器元素截图，覆盖同名 png（脚本见 scripts/regen_prd_shots.js）",
+        "重截后若 PRD 有 📌 历史截图注释，把注释里的旧字段名/旧标题同步成新名（保持整份 PRD 用词一致）"
+      ],
+      "why": "用户 2026-08-08 裁定：改了原型字段/标题却忘了重截截图，PRD 会展示与最新原型不一致的旧图（如旧「活动端口」section 标题），必须固化进流程",
+      "script": "scripts/regen_prd_shots.js",
+      "cmd": "简单单原型：NODE_PATH=\"C:/Users/13364/.workbuddy/binaries/node/workspace/node_modules\" C:/Users/13364/.workbuddy/binaries/node/versions/22.22.2/node.exe scripts/regen_prd_shots.js --proto \"<原型.html 绝对路径>\" --map '[{\"go\":\"go('send')\",\"sel\":\"#viewSend\",\"out\":\"<png 绝对路径>\"}]'；复杂多原型/Tab/弹窗：node regen_prd_shots.js --manifest \"<manifest.json 绝对路径>\"（manifest 格式见脚本头部注释）",
+      "pitfalls": [
+        "file:// 路径含中文必须 encodeURI，否则页面加载失败",
+        "chromium 在无沙箱环境需 args:['--no-sandbox']",
+        "go(expr) 后需 waitForTimeout 等渲染/JS 状态生效再截",
+        "用 locator(sel).screenshot() 只截容器元素（不含侧栏），更贴近页面截图风格",
+        "Tab/弹窗/数据回填需通过 --manifest 分步骤表达；只截默认态会漏掉目标视图",
+        "多原型截图必须按文件分组复用 page，否则重新加载会丢失状态"
+      ]
     }
   ],
   "checklist": {
     "name": "交付前自检 Loop（生成/修改原型后必须 loop 执行，直到全部通过）",
     "precondition": "先跑 smoke 模块且零失败零 JS 错误，再做人工逐项核对；自动化不通过一律禁止交付",
     "items": [
-      {"id": "C01", "check": "交互完整性：每个按钮/链接/标签切换/表单提交/状态变更都有反馈，无死交互、无掉落分支、无只画不响应的元素"},
-      {"id": "C02", "check": "样式正确性：无布局错乱、无未定义裸样式类、无溢出/重叠/文字截断、无响应式破版、无错别字残缺文案"},
-      {"id": "C03", "check": "无冗余说明文字（说明/规则/注意/演示/备注/图例/前端拦截类文字块）", "ref": "PROTO-TXT-001"},
-      {"id": "C04", "check": "grep 写死|不可编辑|固定值|本期不可|本期仅支持|无法修改|locknote 零命中", "ref": "PROTO-TXT-005"},
-      {"id": "C05", "check": "表单选项无重复/错漏：逐个 select 与 radio/checkbox group 核对", "ref": "PROTO-SMK-004"},
-      {"id": "C06", "check": "无 tiny 小字限制标签（🔒限高级/限VIP/仅限会员）", "ref": "PROTO-TXT-004"},
-      {"id": "C07", "check": "无字段旁解释性 hint 小字（默认全部不选中/勾选后可/未勾选则）", "ref": "PROTO-TXT-003"},
-      {"id": "C08", "check": "无新增气泡/弹窗样式类（grep .bubble/.fe-bubble/.tip/.notice）", "ref": "PROTO-STY-006"},
-      {"id": "C09", "check": "选中规格/选项的函数内无提示调用（toast/alert/showBubble）", "ref": "PROTO-STR-005"},
-      {"id": "C10", "check": "仅加购/立即购买/提交动作函数内有提示调用", "ref": "PROTO-STR-005"},
-      {"id": "C11", "check": "提示使用现有全局 Toast/弹窗，未新建 DOM 组件", "ref": "PROTO-STY-006"},
-      {"id": "C12", "check": "后台增改查无 Modal（grep modal-overlay 零命中）", "ref": "PROTO-STR-001"},
-      {"id": "C13", "check": "所有 viewXxx 在 <main> / .phone 内部", "ref": "PROTO-STR-002"},
-      {"id": "C14", "check": "复用核对：后台已基于参考页，前端已复用既有同模块原型，无重复造轮子", "ref": "PROTO-STR-006"},
-      {"id": "C15", "check": "掉需求核对：对比改动前版本列出原有字段/列/筛选器/交互清单逐一核对是否全保留", "ref": "PROTO-STR-007"},
-      {"id": "C16", "check": "平铺产出格式合规（mode 已确定且卡片规范未混用）", "ref": "PROTO-FLAT-001/002/003"},
-      {"id": "C17", "check": "参考截图文案逐字核对（有参考图时必查）", "ref": "PROTO-STY-004"},
-      {"id": "C18", "check": "开发期临时标记已清除 + grep hl-new|NEW 切换|NEW 购买级别 零命中", "ref": "PROTO-TXT-006"},
-      {"id": "C19", "check": "C 端真实截图样式 1:1 对齐（金额区/描边/Tab 高亮色值），无通用风格化偏离", "ref": "PROTO-STY-003"},
-      {"id": "C20", "check": "三态/多状态列表已拆独立移动端页", "ref": "PROTO-STR-003"},
-      {"id": "C21", "check": "静态展示稿顶部已标注「无交互」且元素未绑点击", "ref": "PROTO-FLAT-004"},
-      {"id": "C22", "check": "后台手机号完整 11 位未脱敏", "ref": "PROTO-STR-004"}
+      {
+        "id": "C01",
+        "check": "交互完整性：每个按钮/链接/标签切换/表单提交/状态变更都有反馈，无死交互、无掉落分支、无只画不响应的元素"
+      },
+      {
+        "id": "C02",
+        "check": "样式正确性：无布局错乱、无未定义裸样式类、无溢出/重叠/文字截断、无响应式破版、无错别字残缺文案"
+      },
+      {
+        "id": "C03",
+        "check": "无冗余说明文字（说明/规则/注意/演示/备注/图例/前端拦截类文字块）",
+        "ref": "PROTO-TXT-001"
+      },
+      {
+        "id": "C04",
+        "check": "grep 写死|不可编辑|固定值|本期不可|本期仅支持|无法修改|locknote 零命中",
+        "ref": "PROTO-TXT-005"
+      },
+      {
+        "id": "C05",
+        "check": "表单选项无重复/错漏：逐个 select 与 radio/checkbox group 核对",
+        "ref": "PROTO-SMK-004"
+      },
+      {
+        "id": "C06",
+        "check": "无 tiny 小字限制标签（🔒限高级/限VIP/仅限会员）",
+        "ref": "PROTO-TXT-004"
+      },
+      {
+        "id": "C07",
+        "check": "无冗余选项态 hint 小字（默认全部不选中/勾选后可/未勾选则/即该/即此）；用户明确要求的字段用途说明小字（解释控制什么，见 PROTO-TXT-008）可保留",
+        "ref": "PROTO-TXT-003/008"
+      },
+      {
+        "id": "C08",
+        "check": "无新增气泡/弹窗样式类（grep .bubble/.fe-bubble/.tip/.notice）",
+        "ref": "PROTO-STY-006"
+      },
+      {
+        "id": "C09",
+        "check": "选中规格/选项的函数内无提示调用（toast/alert/showBubble）",
+        "ref": "PROTO-STR-005"
+      },
+      {
+        "id": "C10",
+        "check": "仅加购/立即购买/提交动作函数内有提示调用",
+        "ref": "PROTO-STR-005"
+      },
+      {
+        "id": "C11",
+        "check": "提示使用现有全局 Toast/弹窗，未新建 DOM 组件",
+        "ref": "PROTO-STY-006"
+      },
+      {
+        "id": "C12",
+        "check": "后台增改查无 Modal（grep modal-overlay 零命中）",
+        "ref": "PROTO-STR-001"
+      },
+      {
+        "id": "C13",
+        "check": "所有 viewXxx 在 <main> / .phone 内部",
+        "ref": "PROTO-STR-002"
+      },
+      {
+        "id": "C14",
+        "check": "复用核对：后台已基于参考页，前端已复用既有同模块原型，无重复造轮子",
+        "ref": "PROTO-STR-006"
+      },
+      {
+        "id": "C15",
+        "check": "掉需求核对：对比改动前版本列出原有字段/列/筛选器/交互清单逐一核对是否全保留",
+        "ref": "PROTO-STR-007"
+      },
+      {
+        "id": "C16",
+        "check": "平铺产出格式合规（mode 已确定且卡片规范未混用）",
+        "ref": "PROTO-FLAT-001/002/003"
+      },
+      {
+        "id": "C17",
+        "check": "参考截图文案逐字核对（有参考图时必查）",
+        "ref": "PROTO-STY-004"
+      },
+      {
+        "id": "C18",
+        "check": "开发期临时标记已清除 + grep hl-new|NEW 切换|NEW 购买级别 零命中",
+        "ref": "PROTO-TXT-006"
+      },
+      {
+        "id": "C19",
+        "check": "C 端真实截图样式 1:1 对齐（金额区/描边/Tab 高亮色值），无通用风格化偏离",
+        "ref": "PROTO-STY-003"
+      },
+      {
+        "id": "C20",
+        "check": "三态/多状态列表已拆独立移动端页",
+        "ref": "PROTO-STR-003"
+      },
+      {
+        "id": "C21",
+        "check": "静态展示稿顶部已标注「无交互」且元素未绑点击",
+        "ref": "PROTO-FLAT-004"
+      },
+      {
+        "id": "C22",
+        "check": "后台手机号完整 11 位未脱敏",
+        "ref": "PROTO-STR-004"
+      }
     ]
   },
   "flat_delivery_checklist": {
     "name": "平铺产出专项自检（flat 模块，必须用工具验证不能凭记忆）",
-    "top_errors": ["标题截图核对", "弹窗遗漏", "截图时效性", "截图质量（防污染）"],
+    "top_errors": [
+      "标题截图核对",
+      "弹窗遗漏",
+      "截图时效性",
+      "截图质量（防污染）"
+    ],
     "items": [
-      {"n": 1, "check": "标题与截图逐张核对", "how": "用 Read 打开每张 img 对应 PNG，确认内容与 title 一致", "common_bug": "截图放反/重名覆盖；同一张旧图被复用到多个页面"},
-      {"n": 2, "check": "无遗漏页面（含弹窗）", "how": "对照原型 .html grep modal|弹窗|dialog|新建，确认每个列表页的弹窗/抽屉都有条目或 ph:true 占位", "common_bug": "整列丢失；只放列表页漏了新建/编辑弹窗"},
-      {"n": 3, "check": "截图时效性", "how": "对比原型 HTML 与截图文件修改时间，原型晚于截图 → 优先 playwright 重截，无法重截才标 stale:true"},
-      {"n": 4, "check": "红线项全遵守", "how": "浏览器打开目视检查，按当前 mode 的红线逐条核对"},
-      {"n": 5, "check": "尺寸比例合理", "how": "C端列 ~280px、B端列 ~780px，两区视觉均衡"},
-      {"n": 6, "check": "占位符标记正确", "how": "所有 ph:true 渲染为灰色虚框+「待补」且不计入总张数"},
-      {"n": 7, "check": "图片路径有效", "how": "用 Glob 验证每张 img 路径对应文件实际存在"},
-      {"n": 8, "check": "截图质量无污染", "how": "用 Read 逐张检查：无侧栏残留、无其他弹窗残留、无灰色背景渗入、内容区未被裁切", "ref": "PROTO-FLAT-005"}
+      {
+        "n": 1,
+        "check": "标题与截图逐张核对",
+        "how": "用 Read 打开每张 img 对应 PNG，确认内容与 title 一致",
+        "common_bug": "截图放反/重名覆盖；同一张旧图被复用到多个页面"
+      },
+      {
+        "n": 2,
+        "check": "无遗漏页面（含弹窗）",
+        "how": "对照原型 .html grep modal|弹窗|dialog|新建，确认每个列表页的弹窗/抽屉都有条目或 ph:true 占位",
+        "common_bug": "整列丢失；只放列表页漏了新建/编辑弹窗"
+      },
+      {
+        "n": 3,
+        "check": "截图时效性",
+        "how": "对比原型 HTML 与截图文件修改时间，原型晚于截图 → 优先 playwright 重截，无法重截才标 stale:true"
+      },
+      {
+        "n": 4,
+        "check": "红线项全遵守",
+        "how": "浏览器打开目视检查，按当前 mode 的红线逐条核对"
+      },
+      {
+        "n": 5,
+        "check": "尺寸比例合理",
+        "how": "C端列 ~280px、B端列 ~780px，两区视觉均衡"
+      },
+      {
+        "n": 6,
+        "check": "占位符标记正确",
+        "how": "所有 ph:true 渲染为灰色虚框+「待补」且不计入总张数"
+      },
+      {
+        "n": 7,
+        "check": "图片路径有效",
+        "how": "用 Glob 验证每张 img 路径对应文件实际存在"
+      },
+      {
+        "n": 8,
+        "check": "截图质量无污染",
+        "how": "用 Read 逐张检查：无侧栏残留、无其他弹窗残留、无灰色背景渗入、内容区未被裁切",
+        "ref": "PROTO-FLAT-005"
+      }
     ]
   },
   "related": {
