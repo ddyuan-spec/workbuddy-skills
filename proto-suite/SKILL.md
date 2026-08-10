@@ -1,6 +1,6 @@
 ---
 name: proto-suite
-description: 原型套件（UX 约束 / 冒烟测试 / 平铺产出）。生成或修改任何前端交互原型（H5/App/小程序/平台端后台/商家端后台）时强制调用。① ux：禁冗余说明文字与小字限制标签、禁 AI 臆造 NEW 角标、有真实截图须 1:1 逐字套用、后台增改查一律独立页禁 Modal、C 端三态拆独立页、重绘掉需求须确认；② smoke：交付前必跑 jsdom 冒烟测试（proto_smoke.js 后台 / proto_smoke_client.js C端），退出码 0 才可交付；③ flat：三种平铺模式（review-board 评审板 / flat-flow 跳转流平铺 / modao 墨刀稿），动手前必须先定 mode。触发词：画原型、改原型、前端原型、后台原型、App原型、小程序原型、冒烟、原型自检、平铺、评审板、墨刀。
+description: 原型套件（UX 约束 / 冒烟测试 / 平铺产出）。生成或修改任何前端交互原型（H5/App/小程序/平台端后台/商家端后台）时强制调用。① ux：禁冗余说明文字与小字限制标签（字段用途说明小字用户明确要求时允许，见 rules.json PROTO-TXT-008）（字段用途说明小字用户明确要求时允许，见 rules.json PROTO-TXT-008）（字段用途说明小字用户明确要求时允许，见 rules.json PROTO-TXT-008）、禁 AI 臆造 NEW 角标、有真实截图须 1:1 逐字套用、后台增改查一律独立页禁 Modal、C 端三态拆独立页、重绘掉需求须确认；② smoke：交付前必跑 jsdom 冒烟测试（proto_smoke.js 后台 / proto_smoke_client.js C端），退出码 0 才可交付；③ flat：三种平铺模式（review-board 评审板 / flat-flow 跳转流平铺 / modao 墨刀稿），动手前必须先定 mode。触发词：画原型、改原型、前端原型、后台原型、App原型、小程序原型、冒烟、原型自检、平铺、评审板、墨刀。
 agent_created: true
 ---
 
@@ -31,6 +31,7 @@ agent_created: true
 | `ux` | 交互原型 UX 约束 | `PROTO-TXT` / `PROTO-STY` / `PROTO-STR` | 12 |
 | `smoke` | 自动化冒烟测试硬门禁 | `PROTO-SMK` | 1 |
 | `flat` | 平铺产出（3 种 mode） | `PROTO-FLAT` | 3 |
+| `shot` | 需求调整→PRD 截图重截同步 | `PROTO-SHOT` | 0（REQUIRED 1） |
 
 ## 三条最容易翻车的红线
 
@@ -44,6 +45,7 @@ agent_created: true
 - `checklist.items` 22 项是否全绿？
 - 有 C 端真稿的，金额区/描边/Tab 色值是否与截图一致？
 - 有平铺产出的，mode 定了吗？顶部标「无交互」了吗？
+- 本次是否改动了被 PRD `<img src="coupon-prd-assets/...">` 引用的原型视图？改了却没重截对应 PRD 截图 → 阻断，必须按 `PROTO-SHOT-001` 重截（脚本 `scripts/regen_prd_shots.js`）后再交付。多原型 / Tab 切换 / 弹窗 / 隐藏侧栏等复杂场景使用 `--manifest` 模式。
 
 ## 关联
 
