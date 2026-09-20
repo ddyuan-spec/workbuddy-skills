@@ -1,0 +1,18 @@
+{
+  "name": "Web Deploy",
+  "installedAt": 1781690294548,
+  "source": "marketplace",
+  "version": "1.0.0",
+  "skillId": "skill_2054901554596478976",
+  "examples_zh": [
+    "帮我检查这个网站该怎么部署",
+    "把这个前端项目部署到合适的平台",
+    "给这个静态站准备发布流程"
+  ],
+  "examples_en": [
+    "Help me decide how to deploy this website",
+    "Deploy this frontend project to a suitable platform",
+    "Prepare a publishing workflow for this static site"
+  ],
+  "iconSource": "letter:auto"
+}
