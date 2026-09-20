@@ -106,5 +106,7 @@ description: 跨项目 WorkBuddy 环境与工具坑速查（只读参考）。�
 - 事实：skill 类文档备份仓库 = `ddyuan-spec/workbuddy-skills`（delivery-suite rules.json 已登记映射「skill 类文档」），只有 `main` 分支，**无 gh-pages**。
 - 坑：`gh_push.py` 默认推 `gh-pages` 分支（为 Pages 交付设计），对 skill 仓库会全量 FAIL：`Branch gh-pages not found (HTTP 404)`。
 - 正确用法：`python gh_push.py --repo ddyuan-spec/workbuddy-skills --branch main --root <skills根目录> --put "<skill相对路径>::<同远端路径>::<msg>"`；推完看 VERIFY 段 local=remote 逐文件对齐、结尾 ALL_OK。
-- 同步是**手动按需**的，改完 skill 不会自动备份。2026-09-20 已补推 pm-master / proto-annotation / batch-annotate；其余大量 skill（proto-admin / proto-design / proto-spec / prd-sync / prd-to-dingtalk / safe-edit-delete / coupon-merge-operator / wb-env-notes 本身等）线上仍缺，需按次补推。
-- 注意仓库是 **Public**：含私人内容的 skill（dating-coach / travel-cn / 写作类等）推前须用户确认。
+- **数据结构约定（README 写明）**：仓库根目录直接放各 skill 独立文件夹（README 安装示例 `cp -r _tmp/<skill> ~/.workbuddy/skills/`），**不要**嵌套 `skills/` 或 `.workbuddy/skills/` 子目录；本地 `~/.workbuddy/skills/<name>` 与仓库根 `<name>` 一一对应。历史重复子目录已清，勿再建。
+- **同步状态（2026-09-20 收尾）**：本地 39 个 user-level skill 已全部备份到根目录（含 6 个个人生活类 dating-coach / dating-talk / travel-cn / podcast-topic-picker / course-lecture-study / renqing-polish）。废弃的 `proto-suite` 已删，结构干净。
+- 同步是**手动按需**的：改完 skill 不会自动备份，下次有重要 skill 改动后主动跑一次 `--spec-file` 增量补推即可。
+- 注意仓库是 **Public**：私密 skill 内容公开可见；若要收回到私有仓库需另建 repo 并迁移（勿在 Public 仓动手改私密内容）。
