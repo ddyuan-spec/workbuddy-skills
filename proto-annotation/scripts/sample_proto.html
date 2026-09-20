@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>批注引擎样例原型 · 水卡设置（用于验证 proto-annotation 注入）</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;padding:20px;background:#f5f6f8;color:#333}
+  .wrap{max-width:480px;margin:0 auto}
+  h3{margin:0 0 14px;font-size:16px}
+  .field{display:flex;align-items:center;gap:10px;padding:12px;background:#fff;border:1px solid #eee;border-radius:8px;margin-bottom:10px}
+  .field label{width:120px;font-size:13px;color:#555;flex:0 0 auto}
+  .field input,.field select{flex:1;height:34px;border:1px solid #ccc;border-radius:6px;padding:0 10px;font-size:13px}
+  .btn-add{margin:16px 0;padding:10px 18px;background:#1AAD7C;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px}
+  /* 弹窗（典型后台 .wct-mask 风格，z-index 4000 与引擎回落值一致） */
+  .wct-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:4000;align-items:center;justify-content:center}
+  .wct-modal{background:#fff;width:340px;padding:20px;border-radius:12px}
+  .wct-modal .field{margin-bottom:10px}
+  .modal-title{font-size:15px;font-weight:600;margin-bottom:14px}
+  .modal-close{margin-top:8px;padding:8px 16px;background:#eee;color:#555;border:none;border-radius:8px;cursor:pointer;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h3>水卡设置（样例原型）</h3>
+
+  <!-- 背景字段 12 个（默认可见，开箱即贴批注角标） -->
+  <div class="field" data-anno="ak01"><label>水卡名称</label><input value="年卡"></div>
+  <div class="field" data-anno="ak02"><label>水卡类型</label><select><option>年卡</option><option>季卡</option><option>月卡</option></select></div>
+  <div class="field" data-anno="ak03"><label>关联商品</label><input value="桶装水"></div>
+  <div class="field" data-anno="ak04"><label>每日取水上限</label><input value="5"></div>
+  <div class="field" data-anno="ak05"><label>每月取水上限</label><input value="150"></div>
+  <div class="field" data-anno="ak06"><label>总水量</label><input value="5000"></div>
+  <div class="field" data-anno="ak07"><label>售卖价</label><input value="399"></div>
+  <div class="field" data-anno="ak08"><label>原价</label><input value="599"></div>
+  <div class="field" data-anno="ak09"><label>库存</label><input value="100"></div>
+  <div class="field" data-anno="ak10"><label>是否上架</label><select><option>是</option><option>否</option></select></div>
+  <div class="field" data-anno="ak11"><label>排序权重</label><input value="0"></div>
+  <div class="field" data-anno="ak12"><label>备注</label><input placeholder="选填"></div>
+
+  <button class="btn-add" onclick="openCardTpl()">新增水卡</button>
+</div>
+
+<!-- 弹窗：水卡新增弹窗（默认 display:none，点「新增水卡」调 openCardTpl 打开） -->
+<div class="wct-mask" id="wctMask">
+  <div class="wct-modal">
+    <div class="modal-title">新增水卡</div>
+    <!-- 弹窗内字段 7 个（默认在 DOM 里，但弹窗关闭 → 落 pending 堆右上角；开弹窗 → 只显示这 7 个） -->
+    <div class="field" data-anno="ak13"><label>有效期(天)</label><input value="365"></div>
+    <div class="field" data-anno="ak14"><label>每日取水上限</label><input value="5"></div>
+    <div class="field" data-anno="ak15"><label>每月取水上限</label><input value="150"></div>
+    <div class="field" data-anno="ak16"><label>总水量</label><input value="5000"></div>
+    <div class="field" data-anno="ak17"><label>售卖价</label><input value="399"></div>
+    <div class="field" data-anno="ak18"><label>是否上架</label><select><option>是</option><option>否</option></select></div>
+    <div class="field" data-anno="ak19"><label>排序权重</label><input value="0"></div>
+    <button class="modal-close" onclick="document.getElementById('wctMask').style.display='none'">关闭</button>
+  </div>
+</div>
+
+<script>
+/* 打开弹窗（典型后台交互钩子）。本样例 autoActivate 默认不调它（保持默认全量显示）；
+   若想「默认自动展开弹窗」，在 seed 对应条目的 activates 写 "openCardTpl" 即可，引擎会自动调用。 */
+function openCardTpl(){ document.getElementById('wctMask').style.display='flex'; }
+</script>
+
+<!-- 批注种子：19 条。view 统一 global（分类靠 modalOf 判弹窗归属，不靠 view）。
+     数值/枚举类口径以产品确认为准，此处仅示意文案，不臆造范围。 -->
+<script id="__anno_seed" type="application/json">[
+{"id":"ak01","no":1,"view":"global","sel":"[data-anno=\"ak01\"]","text":"水卡名称：新增时必填"},
+{"id":"ak02","no":2,"view":"global","sel":"[data-anno=\"ak02\"]","text":"水卡类型：下拉（年卡/季卡/月卡）"},
+{"id":"ak03","no":3,"view":"global","sel":"[data-anno=\"ak03\"]","text":"关联商品：选择对应水商品"},
+{"id":"ak04","no":4,"view":"global","sel":"[data-anno=\"ak04\"]","text":"每日取水上限：正整数，最小1"},
+{"id":"ak05","no":5,"view":"global","sel":"[data-anno=\"ak05\"]","text":"每月取水上限：正整数，最小1"},
+{"id":"ak06","no":6,"view":"global","sel":"[data-anno=\"ak06\"]","text":"总水量：正整数，最小1"},
+{"id":"ak07","no":7,"view":"global","sel":"[data-anno=\"ak07\"]","text":"售卖价：单位元"},
+{"id":"ak08","no":8,"view":"global","sel":"[data-anno=\"ak08\"]","text":"原价：单位元"},
+{"id":"ak09","no":9,"view":"global","sel":"[data-anno=\"ak09\"]","text":"库存：正整数"},
+{"id":"ak10","no":10,"view":"global","sel":"[data-anno=\"ak10\"]","text":"是否上架：是/否"},
+{"id":"ak11","no":11,"view":"global","sel":"[data-anno=\"ak11\"]","text":"排序权重：数字越小越靠前"},
+{"id":"ak12","no":12,"view":"global","sel":"[data-anno=\"ak12\"]","text":"备注：选填"},
+{"id":"ak13","no":13,"view":"global","sel":"[data-anno=\"ak13\"]","text":"有效期(天)：正整数，最小1（弹窗内字段）"},
+{"id":"ak14","no":14,"view":"global","sel":"[data-anno=\"ak14\"]","text":"每日取水上限：正整数，最小1（弹窗内字段）"},
+{"id":"ak15","no":15,"view":"global","sel":"[data-anno=\"ak15\"]","text":"每月取水上限：正整数，最小1（弹窗内字段）"},
+{"id":"ak16","no":16,"view":"global","sel":"[data-anno=\"ak16\"]","text":"总水量：正整数，最小1（弹窗内字段）"},
+{"id":"ak17","no":17,"view":"global","sel":"[data-anno=\"ak17\"]","text":"售卖价：单位元（弹窗内字段）"},
+{"id":"ak18","no":18,"view":"global","sel":"[data-anno=\"ak18\"]","text":"是否上架：是/否（弹窗内字段）"},
+{"id":"ak19","no":19,"view":"global","sel":"[data-anno=\"ak19\"]","text":"排序权重：数字越小越靠前（弹窗内字段）"}
+]</script>
+</body>
+</html>
