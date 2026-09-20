@@ -1,0 +1,97 @@
+<!-- ============================================================
+     proto-c skill · 复制源码标准组件（copy-source standard component）
+     ------------------------------------------------------------
+     作用：C 端交互原型交付墨刀时的「复制源码」能力，统一规范、禁止自由发挥。
+     本轮（2026-09-02）固化原因：此前无规范，导致复制按钮被塞进手机框左下角
+     悬浮药丸、遮挡内容、破坏视觉。现统一为【页面顶部 .copy-bar 工具条】。
+
+     ■ 强制规则（PROTO-SMK-011）
+       1) 放置位置：.copy-bar 必须是 <body> 内、.phone 之外的【第一个子元素】，
+          position:sticky;top:0。严禁放进 .phone 内部做悬浮按钮（遮挡内容）。
+       2) 双按钮：
+          - 「复制当前页」：所见即所得，抓取当前 .page.active / .view.active，
+            包成独立可运行 HTML（含 .phone 外壳 + 完整 <style>），供「挑页复制」——
+            用户只把要用的页面粘到墨刀。
+          - 「复制全部源码」：复制初始纯净态整份文件（从首屏即可运行）。
+       3) 复制实现：navigator.clipboard 优先 + execCommand 兜底。
+       4) 函数名以 __proto 前缀，避免与原型业务函数（如 doCopy / showToast）撞名。
+
+     ■ 用法：把下面三段分别并入原型的 <style> / <body> 开头 / <script>。
+     ============================================================ -->
+
+<!-- ===== 1) 并入 <style> ===== -->
+<style>
+.copy-bar{position:sticky;top:0;left:0;right:0;z-index:9999;background:#1f1f2e;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 16px;box-shadow:0 2px 10px rgba(0,0,0,.2);font-family:inherit}
+.copy-bar__title{display:flex;flex-direction:column;gap:2px;min-width:0}
+.copy-bar__name{font-size:13px;font-weight:700;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.copy-bar__hint{font-size:11px;color:#a6b0c8}
+.copy-bar__actions{display:flex;gap:8px;flex-shrink:0}
+.copy-btn{padding:7px 14px;border:none;border-radius:18px;background:linear-gradient(135deg,#07c160,#06ad56);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;transition:transform .1s,box-shadow .2s}
+.copy-btn--ghost{background:transparent;border:1px solid rgba(255,255,255,.4);font-weight:600}
+.copy-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(7,193,96,.35)}
+.copy-btn:active{transform:translateY(0)}
+.copy-btn.copied{background:linear-gradient(135deg,#059669,#047857)}
+.copy-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f1f2e;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.25);opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
+.copy-toast.show{opacity:1}
+</style>
+
+<!-- ===== 2) 贴到 <body> 开头（.phone 之外，第一个子元素） ===== -->
+<div class="copy-bar">
+  <div class="copy-bar__title">
+    <div class="copy-bar__name">📋 {原型标题}</div>
+    <div class="copy-bar__hint">单文件原型 · 可整份或逐页复制源码</div>
+  </div>
+  <div class="copy-bar__actions">
+    <button class="copy-btn" id="copyCurrentPage" data-label="复制当前页" onclick="copyCurrentPage()">复制当前页</button>
+    <button class="copy-btn copy-btn--ghost" id="copyAllSource" data-label="复制全部源码" onclick="copyAllSource()">复制全部源码</button>
+  </div>
+</div>
+<div class="copy-toast" id="copyToast"></div>
+
+<!-- ===== 3) 并入 <script>（与业务 JS 同段，禁止改名/挪位） ===== -->
+<script>
+/* ========== 复制源码到墨刀（proto-c 标准组件，函数名 __proto 前缀防撞名） ========== */
+function __protoGetStyle(){ var s=document.querySelector('head style'); return s?s.innerHTML:''; }
+function __protoActivePage(){
+  return document.querySelector('.phone .page.active, .phone .view.active')
+      || document.querySelector('.page.active, .view.active')
+      || document.querySelector('.page, .view')
+      || document.querySelector('.phone > *');
+}
+/* 把单个页面包成独立可运行 HTML：继承完整 <style> + .phone 外壳，粘墨刀单屏可直接运行 */
+function __protoBuildStandalone(pageEl, title){
+  var style = __protoGetStyle();
+  var phoneCls = (pageEl && pageEl.closest && pageEl.closest('.phone')) ? ' class="phone"' : '';
+  var inner = pageEl ? pageEl.outerHTML : document.body.innerHTML;
+  return '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<title>'
+       + (title||'原型单页') + '</title>\n<style>\n' + style + '\n</style>\n</head>\n<body>\n<div'
+       + phoneCls + '>\n' + inner + '\n</div>\n</body>\n</html>';
+}
+function __protoCopy(text, btnId, okMsg){
+  function toast(msg){ var t=document.getElementById('copyToast'); if(t){ t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},1800); } }
+  function done(ok){
+    var b=document.getElementById(btnId);
+    if(ok){ if(b){ b.textContent='✓ 已复制'; b.classList.add('copied'); setTimeout(function(){ b.textContent=b.getAttribute('data-label')||'复制'; b.classList.remove('copied'); },1800); } toast(okMsg); }
+    else { toast('复制失败，请手动复制源码'); }
+  }
+  function fb(t){ try{ var ta=document.createElement('textarea'); ta.value=t; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.top='-9999px'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); var ok=document.execCommand('copy'); document.body.removeChild(ta); return ok; }catch(e){ return false; } }
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(function(){done(true);}).catch(function(){done(fb(text));}); }
+  else { done(fb(text)); }
+}
+/* 复制当前页：所见即所得，抓取当前屏幕这一页的实时内容，包成独立可运行 HTML（挑页复制用） */
+function copyCurrentPage(){
+  var page = __protoActivePage();
+  var title = (page && page.getAttribute('data-title'))
+           || (page && page.querySelector && page.querySelector('.nav') && page.querySelector('.nav').textContent)
+           || document.title || '原型单页';
+  var html = __protoBuildStandalone(page, title);
+  __protoCopy(html, 'copyCurrentPage', '已复制当前页，粘贴到墨刀即可');
+}
+/* 复制全部源码：初始纯净态整份文件（从首屏运行用） */
+function copyAllSource(){
+  var src = window.__PROTO_SOURCE__ || ('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
+  __protoCopy(src, 'copyAllSource', '已复制整份源码，粘贴到墨刀即可运行');
+}
+// 记录初始纯净源码（首屏态），供「复制全部源码」粘贴墨刀
+window.__PROTO_SOURCE__ = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+</script>
