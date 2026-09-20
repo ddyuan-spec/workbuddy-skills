@@ -1,0 +1,37 @@
+{
+  "skill": "proto-spec",
+  "version": "1.0.0",
+  "gates": {
+    "SPEC-000": {
+      "name": "路由门禁",
+      "severity": "BLOCKER",
+      "desc": "画/改原型前先判定：新建多页→全量三件套；单页增量改→SPEC-004 影响判定。未判定禁止进图形生成。"
+    },
+    "SPEC-001": {
+      "name": "三件套先出",
+      "severity": "BLOCKER",
+      "desc": "NAV-MAP / PUBLIC-SPEC / PAGE-SPEC 三份 md 不齐全，禁止进图形生成阶段。"
+    },
+    "SPEC-002": {
+      "name": "设计规范必须用户确认",
+      "severity": "BLOCKER",
+      "desc": "公共规范（色板/token/类型规范/项目基线）必须经用户逐项确认，删兜底、禁自动命中基线默认行为。未确认禁止假定任何风格。"
+    },
+    "SPEC-003": {
+      "name": "导航地图登记门禁",
+      "severity": "BLOCKER",
+      "desc": "任何 go() 跳转必须先登记到 NAV-MAP（源页→目标页→触发）。未登记禁止写进原型；proto-c 冒烟 [B] 反向校验。"
+    },
+    "SPEC-004": {
+      "name": "增量修改影响范围判定",
+      "severity": "BLOCKER",
+      "desc": "改原型先判单页/全局。全局改动必须重跑全量八项验收+全量点击穿透。"
+    },
+    "SPEC-005": {
+      "name": "八项验收基线先立",
+      "severity": "BLOCKER",
+      "desc": "先写清八项验收口径（布局对/视觉签名/避免AI默认/文案基调/跳转通/状态齐/交互真/无悬空），画完对照打勾。"
+    }
+  },
+  "common_source_note": "本 skill 补 proto-c/proto-admin 生成前 spec 锚点；机器验收仍由 proto-c/proto-admin 负责，勿重复。"
+}
