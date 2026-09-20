@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTML 可视化就地编辑器</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#fff; --line:#e6e8eb; --txt:#222; --sub:#8a9099;
+    --pri:#1aad7c; --pri-d:#149a6c; --warn:#e04d4d; --chip:#eef6f2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt)}
+  header{padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  h1{font-size:15px;margin:0;font-weight:600}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex:1}
+  input[type=text]{flex:1;min-width:240px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  button{padding:7px 12px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--pri)}
+  button.primary{background:var(--pri);color:#fff;border-color:var(--pri)}
+  button.primary:hover{background:var(--pri-d)}
+  button.on{background:var(--chip);border-color:var(--pri);color:var(--pri-d);font-weight:600}
+  .path{font-size:12px;color:var(--sub);padding:0 16px;margin-top:6px}
+  .path b{color:var(--txt)}
+  .dropzone{flex:1;min-height:46px;border:1.5px dashed var(--line);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:12.5px;padding:6px 10px;text-align:center}
+  .dropzone.over{border-color:var(--pri);background:var(--chip);color:var(--pri-d)}
+  .warn{margin:8px 16px;padding:9px 12px;background:#fff4f4;border:1px solid #f3c9c9;color:#b5302f;border-radius:8px;font-size:12.5px;display:none}
+  .warn.show{display:block}
+  .aid{margin:0 16px 8px;padding:9px 12px;background:var(--chip);border:1px solid #cfe9df;border-radius:8px;font-size:12.5px;color:#137a57;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .aid code{background:#fff;padding:1px 6px;border-radius:5px;border:1px solid #cfe9df}
+  .stage{position:relative;height:calc(100vh - 168px);background:#e9ebee}
+  iframe{width:100%;height:100%;border:0;background:#fff}
+  .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+  .badge.dirty{background:#fff0e6;color:#d9730d}
+  .badge.clean{background:#eef6f2;color:#149a6c}
+  .hint{color:var(--sub);font-size:11.5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>HTML 可视化编辑器</h1>
+  <div class="bar">
+    <input id="pathInput" type="text" placeholder="粘贴本地 HTML 绝对路径，例如 C:\Users\13364\WorkBuddy\绿韵家app\lvyunjia-watercard-c-flat.html">
+    <button id="openBtn">打开</button>
+    <div class="dropzone" id="drop">把 .html 文件拖到这里，或直接粘贴路径后点「打开」</div>
+  </div>
+  <div class="bar" style="flex:0 0 auto">
+    <button id="editBtn">✎ 编辑模式</button>
+    <button id="saveBtn" class="primary">保存写回</button>
+    <button id="refreshBtn">↻ 从磁盘刷新</button>
+    <span id="dirty" class="badge clean">未改动</span>
+  </div>
+</header>
+
+<div class="path">当前文件：<b id="curPath">—</b></div>
+<div class="warn" id="warn"></div>
+<div class="aid">
+  <span>🤖 <b>让 AI 改（结构/批量）：</b>把下面路径发给我（WorkBuddy），我改完你点「从磁盘刷新」即可同步。</span>
+  <button id="copyPath">复制路径</button>
+</div>
+
+<div class="stage">
+  <iframe id="frame" src="about:blank"></iframe>
+</div>
+
+<script>
+const frame = document.getElementById('frame');
+const pathInput = document.getElementById('pathInput');
+const curPathEl = document.getElementById('curPath');
+const warnEl = document.getElementById('warn');
+const dirtyEl = document.getElementById('dirty');
+const editBtn = document.getElementById('editBtn');
+const drop = document.getElementById('drop');
+
+let currentPath = '';
+let isDirty = false;
+let editMode = false;
+let hoverStyle = null;
+
+function setDirty(v){
+  isDirty = v;
+  dirtyEl.textContent = v ? '有改动未保存' : '未改动';
+  dirtyEl.className = 'badge ' + (v ? 'dirty' : 'clean');
+}
+function setPath(p){ currentPath = p; curPathEl.textContent = p || '—'; }
+
+function detectGenerated(text){
+  const hits = ['平铺图（无交互）','无交互 / 静态展示','<!-- GENERATED','GENERATED FROM','生成物'];
+  const found = hits.some(h => text.includes(h));
+  if(found){
+    warnEl.classList.add('show');
+    warnEl.innerHTML = '⚠️ 这是<b>生成物</b>（由交互原型抓取生成）。在这里手改文字，下次重新生成平铺图会被覆盖。建议：改<b>源文件</b>（交互原型）后用 gen_flat_states.js 重新生成；或确认只是临时评审标注再保存。';
+  } else {
+    warnEl.classList.remove('show');
+  }
+}
+
+async function openByPath(p){
+  if(!p){ alert('请先粘贴 HTML 路径'); return; }
+  setPath(p);
+  frame.src = '/view?path=' + encodeURIComponent(p);
+  try{
+    const r = await fetch('/view?path=' + encodeURIComponent(p));
+    detectGenerated(await r.text());
+  }catch(e){}
+  setDirty(false);
+}
+
+document.getElementById('openBtn').onclick = () => openByPath(pathInput.value.trim());
+pathInput.addEventListener('keydown', e => { if(e.key==='Enter') openByPath(pathInput.value.trim()); });
+
+// 拖拽打开（仅取内容进 iframe，保存前需填路径）
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if(!f) return;
+  if(!/\.html?$/i.test(f.name)){ alert('只支持 .html/.htm'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    frame.srcdoc = reader.result;
+    setPath(''); pathInput.value = f.name; // 提示用户补全保存路径
+    detectGenerated(reader.result);
+    setDirty(false);
+    alert('已载入「'+f.name+'」。保存前请在上方路径框填好要写回的绝对路径。');
+  };
+  reader.readAsText(f, 'utf-8');
+});
+
+// 编辑模式：点文字就地改
+function injectHoverStyle(){
+  const d = frame.contentDocument; if(!d) return;
+  if(hoverStyle && hoverStyle.parentNode) return;
+  hoverStyle = d.createElement('style');
+  hoverStyle.id = '__editorHover';
+  hoverStyle.textContent = '*{outline:1px dashed #1aad7c33} *:hover{outline:1px solid #1aad7c !important;cursor:text}';
+  d.head.appendChild(hoverStyle);
+}
+function removeHoverStyle(){
+  const d = frame.contentDocument; if(!d) return;
+  const s = d.getElementById('__editorHover'); if(s) s.remove();
+  hoverStyle = null;
+}
+function onFrameClick(e){
+  if(!editMode) return;
+  const el = e.target;
+  const tag = (el.tagName||'').toUpperCase();
+  if(['SCRIPT','STYLE','META','LINK','BR','IMG','INPUT','BUTTON','HTML','BODY'].includes(tag)) return;
+  if(!el.textContent || !el.textContent.trim()) return;
+  e.preventDefault(); e.stopPropagation();
+  el.setAttribute('contenteditable','true');
+  el.focus();
+  // 进入编辑即全选该元素文字，用户直接打字即整体替换（不必先手动框选）
+  try{
+    const range = d.createRange(); range.selectNodeContents(el);
+    const sel = d.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  }catch(_){}
+  const blur = () => {
+    el.removeAttribute('contenteditable');
+    el.removeEventListener('blur', blur);
+    setDirty(true);
+  };
+  el.addEventListener('blur', blur);
+}
+function attachEditHandlers(){
+  const d = frame.contentDocument;
+  if(!d) return;
+  d.removeEventListener('click', onFrameClick, true);
+  if(editMode){
+    d.addEventListener('click', onFrameClick, true);
+    injectHoverStyle();
+  } else {
+    removeHoverStyle();
+  }
+}
+frame.addEventListener('load', () => {
+  // 每次 iframe 重载后重新绑定
+  setTimeout(attachEditHandlers, 50);
+});
+
+editBtn.onclick = () => {
+  editMode = !editMode;
+  editBtn.classList.toggle('on', editMode);
+  editBtn.textContent = editMode ? '✎ 编辑中（点文字改）' : '✎ 编辑模式';
+  attachEditHandlers();
+};
+
+document.getElementById('refreshBtn').onclick = () => {
+  if(!currentPath){ alert('拖入的文件没有磁盘路径，无法从磁盘刷新；请用路径打开。'); return; }
+  openByPath(currentPath);
+};
+
+document.getElementById('saveBtn').onclick = async () => {
+  if(!currentPath){ alert('没有写回路径。请在上方路径框填好绝对路径（拖入的文件需先补全路径）。'); return; }
+  const d = frame.contentDocument;
+  if(!d){ alert('文档未加载'); return; }
+  removeHoverStyle();
+  const html = '<!DOCTYPE html>\n' + d.documentElement.outerHTML;
+  try{
+    const r = await fetch('/save', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path: currentPath, html})});
+    const j = await r.json();
+    if(j.ok){ setDirty(false); alert('已保存写回：\n'+j.path); }
+    else alert('保存失败：' + (j.err||''));
+  }catch(e){ alert('保存出错：'+e.message); }
+};
+
+document.getElementById('copyPath').onclick = () => {
+  if(!currentPath){ alert('当前没有路径可复制（拖入文件请先填路径）'); return; }
+  navigator.clipboard.writeText(currentPath).then(()=>alert('已复制路径：\n'+currentPath));
+};
+</script>
+</body>
+</html>
